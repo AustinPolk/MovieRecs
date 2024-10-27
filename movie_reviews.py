@@ -2,21 +2,52 @@ from typing import Callable
 from imdb import Cinemagoer
 import numpy as np
 from spacy import Language, load
-from gensim import downloader
+from gensim import downloader, models
 import math
-from keras import Model, Sequential, layers
+from keras import Model, Sequential, layers, losses
 from sklearn import svm
+import pickle
+
+def get_movies_from_binaries(filepaths: list[str]) -> dict[str, int]:
+    movies = {}
+    for filepath in filepaths:
+        with open(filepath, "rb") as f:
+            these_movies = pickle.load(f)
+            for movie, year in these_movies.items():
+                if movie in movies and movies[movie] != -1:
+                    continue
+                movies[movie] = year
+    return movies
+
+def unpickle(filepath: str):
+    p = None
+    try:
+        with open(filepath, "rb") as f:
+            p = pickle.load(f)
+    except:
+        p = None
+    return p
 
 def get_movie_ids(movies: dict[str, int]) -> dict[str, str]:
     movies_by_id = {}
     ia = Cinemagoer()
     for movie, year in movies.items():
-        search_results = ia.search_movie(movie)
-        if year == -1:
+        print(f"Searching for {movie} ({year})...", sep="")
+        for i in range(3):
+            try:
+                query = f"{movie} ({year})" if year != -1 else movie
+                search_results = ia.search_movie(query)
+                if not search_results:
+                    raise
+            except:
+                print("Reattempting...")
+                continue
             result = search_results[0]
+            break
         else:
-            same_year = [x for x in search_results if int(x['year']) == int(year)]
-            result = same_year[0]
+            print("Failure")
+            continue
+        print("Found")
         id = result.movieID
         movies_by_id[id] = movie
     return movies_by_id
@@ -67,7 +98,7 @@ def get_plots_keywords(movie_plots: dict[str, str], adjectives: bool = False) ->
     
     return keywords_by_id
 
-def get_keyword_counts(movie_keywords: dict[str, str]) -> dict[str, int]:
+def get_keyword_counts(movie_keywords: dict[str, set[str]]) -> dict[str, int]:
     keyword_counts = {}
     for id, keywords in movie_keywords.items():
         for keyword in keywords:
@@ -106,7 +137,7 @@ def get_movie_keyword_vectors(master_keyword_list: list[str], movies_keywords: d
 
     return vectors_by_id
 
-def get_word2vec_movie_vector(master_keyword_list: list[str], movie_vector: np.ndarray, embeddings) -> np.ndarray:
+def get_word2vec_movie_vector(master_keyword_list: list[str], movie_vector: np.ndarray, embeddings: models.keyedvectors.KeyedVectors) -> np.ndarray:
     n = embeddings['word'].shape[0]
     word2vec_vec = np.zeros(n)
 
@@ -119,6 +150,13 @@ def get_word2vec_movie_vector(master_keyword_list: list[str], movie_vector: np.n
                 continue
     
     return word2vec_vec
+
+def get_word2vec_movie_vectors(master_word_list: list[str], word_vectors: dict[str, np.ndarray], embeddings: models.keyedvectors.KeyedVectors) -> dict[str, np.ndarray]:
+    vectors_by_id = {}
+    for id, word_vector in word_vectors.items():
+        word2vec_vector = get_word2vec_movie_vector(master_word_list, word_vector, embeddings)
+        vectors_by_id[id] = word2vec_vector
+    return vectors_by_id
 
 def compress_vector_dimensions(vector: np.ndarray, dimensions: int, geometric: bool):
     n = vector.shape[0]
@@ -147,19 +185,27 @@ def compress_vector_dimensions(vector: np.ndarray, dimensions: int, geometric: b
 
     return compressed
 
+def compress_vectors_dimensions(movie_vectors: dict[str, np.ndarray], dimensions: int, geometric: bool):
+    vectors_by_id = {}
+    for id, vector in movie_vectors.items():
+        vec = compress_vector_dimensions(vector, dimensions, geometric)
+        vectors_by_id[id] = vec
+    return vectors_by_id
+
 def get_encoder(input_size: int, latent_size: int, hidden_activation: str, latent_activation: str) -> Model:
 
     emid = min(64, input_size // 2)
     e1 = int(emid + 0.25 * (input_size - emid))
     e3 = int(latent_size + 0.25 * (emid - latent_size))
     encoder = Sequential([
-        layers.Dense(e1, activation=hidden_activation, input_shape=(input_size,)),
+        layers.InputLayer((input_size,)),
+        layers.Dense(e1, activation=hidden_activation),
         layers.Dense(emid, activation=hidden_activation),
         layers.Dense(e3, activation=hidden_activation),
         layers.Dense(latent_size, activation=latent_activation)
     ])
 
-    encoder.compile(loss='mse', optimizer='adam')
+    encoder.compile(loss=losses.MeanSquaredError(), optimizer='adam')
 
     print(f"Encoder structure: {input_size} -> {e1} -> {emid} -> {e3} -> {latent_size}")
 
@@ -174,7 +220,7 @@ def get_movies_genres(movie_ids: list[str]) -> dict[str, list[str]]:
             try:
                 movie = ia.get_movie(movie_id)
                 genres = movie.data['genres']
-                genres_by_id[id] = genres
+                genres_by_id[movie_id] = genres
             except:
                 continue
             break
@@ -221,16 +267,19 @@ def get_random_features(movie_ids: list[str], dimensions: int, rand_function: Ca
         vectors_by_id[id] = vec
     return vectors_by_id
 
-def train_keyword_to_feature_encoder(encoder: Model, keyword_vectors: dict[str, np.ndarray], feature_vectors: dict[str, np.ndarray], epochs: int = 100) -> Model:
+def train_feature_encoder(encoder: Model, keyword_vectors: dict[str, np.ndarray], feature_vectors: dict[str, np.ndarray], epochs: int = 100) -> Model:
     n = len(next(iter(keyword_vectors)))
     input_features = []
     for i in range(n):
         this_feature = []
         for _, vector in keyword_vectors.items():
             this_feature.append(vector[i])
-        this_vec = np.array(this_feature)
-        input_features.append(this_vec)
+        #this_vec = np.array(this_feature)
+        #input_features.append(this_vec)
+        input_features.append(this_feature)
     
+    #print(np.array(input_features))
+
     m = len(next(iter(feature_vectors)))
     output_features = []
     for i in range(m):
@@ -240,12 +289,12 @@ def train_keyword_to_feature_encoder(encoder: Model, keyword_vectors: dict[str, 
         this_vec = np.array(this_feature)
         output_features.append(this_vec)
 
-    encoder.fit(x = input_features, y = output_features, epochs = epochs)
+    encoder.fit(x = np.array(input_features).T, y = np.array(output_features).T, epochs = epochs)
 
     return encoder
 
 class UserModel:
-    def __init__(self, pos: svm.SVC, neg: svm.SVC):
+    def __init__(self, pos: svm.OneClassSVM, neg: svm.OneClassSVM):
         self.pos_classifier: svm.SVC = pos
         self.neg_classifier: svm.SVC = neg
         self.pos_weight: float = 1.0
@@ -260,13 +309,13 @@ class UserModel:
             self.has_neg = False 
         
         if self.has_pos:
-            self.pos_classifier.fit(pX, pY)
-            pscore = self.pos_classifier.score(pX, pY)
+            self.pos_classifier.fit(pX)
+            pscore = sum(self.pos_classifier.score_samples(pX)) / (100 * len(pX))
             self.pos_weight = pscore
 
         if self.has_neg:
-            self.neg_classifier.fit(nX, nY)
-            nscore = self.neg_classifier.score(nX, nY)
+            self.neg_classifier.fit(nX)
+            nscore = sum(self.neg_classifier.score_samples(nX)) / (100 * len(nX))
             self.neg_weight = nscore
     
     def _sigmoid(self, x):
@@ -278,7 +327,6 @@ class UserModel:
         total = p_pred[0] * self.pos_weight + n_pred[0] * self.neg_weight
         return self._sigmoid(total)
 
-
 def train_user_model(pos_classifier: svm.SVC, neg_classifier: svm.SVC, feature_vectors: dict[str, np.ndarray], user_preferences: dict[str, int]) -> UserModel:
     pos_X = []
     pos_Y = []
@@ -286,6 +334,9 @@ def train_user_model(pos_classifier: svm.SVC, neg_classifier: svm.SVC, feature_v
     neg_Y = []
 
     for id, preference in user_preferences.items():
+        if id not in feature_vectors:
+            continue
+        
         vec = feature_vectors[id]
         if preference:
             pos_X.append(vec)
@@ -298,3 +349,32 @@ def train_user_model(pos_classifier: svm.SVC, neg_classifier: svm.SVC, feature_v
     userModel.fit(pos_X, pos_Y, neg_X, neg_Y)
 
     return userModel
+
+def get_user_preferences(preference_file: str) -> dict[str, int]:
+    movies = {}
+    preferences = []
+    with open(preference_file) as f:
+        lines = f.readlines()
+        for line in lines:
+            stripped = line.strip().split(",,,")
+            
+            liked = 1 if stripped[0][0] == "+" else 0
+            preferences.append(liked)
+
+            title = stripped[0][1:]
+            if len(stripped) == 1:
+                year = -1
+            else:
+                year = int(stripped[1])
+            movies[title] = year
+    
+    user_movies = get_movie_ids(movies)
+    ids = list(user_movies.keys())
+
+    user_preferences = {}
+    for id, pref in zip(ids, preferences):
+        user_preferences[id] = pref
+
+    return user_preferences
+
+            
