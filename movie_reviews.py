@@ -2,11 +2,32 @@ from typing import Callable
 from imdb import Cinemagoer
 import numpy as np
 from spacy import Language, load
-from gensim import downloader, models
+from gensim import models
 import math
 from keras import Model, Sequential, layers, losses
 from sklearn import svm
 import pickle
+
+class Autoencoder(Model):
+  def __init__(self, input_size, hyperparameters):
+    super(Autoencoder, self).__init__()
+    self.latent_dim = hyperparameters["EncoderLatentDimensions"]
+    self.shape = (input_size,)
+    self.encoder = Sequential([
+        layers.Dense(hyperparameters["EncoderHiddenDimensions"], activation=hyperparameters["EncoderHiddenActivation"]),
+        layers.Dense(hyperparameters["EncoderLatentDimensions"], activation=hyperparameters["EncoderLatentActivation"]),
+    ])
+    self.decoder = Sequential([
+        layers.Dense(hyperparameters["DecoderHiddenDimensions"], activation=hyperparameters["DecoderHiddenActivation"]),
+        layers.Dense(input_size, activation=hyperparameters["DecoderFinalActivation"]),
+        layers.Reshape(self.shape)
+    ])
+    self.compile(optimizer='adam', loss=losses.MeanSquaredError())
+
+  def call(self, x):
+    encoded = self.encoder(x)
+    decoded = self.decoder(encoded)
+    return decoded
 
 def get_movies_from_binaries(filepaths: list[str]) -> dict[str, int]:
     movies = {}
