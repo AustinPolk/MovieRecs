@@ -9,18 +9,28 @@
 +Goblet of Fire
 +Beavis and Butthead Do America
 +Free Guy
+-Oppenheimer
 +Django Unchained
+-No Way Home
 +Monster House
 +Hitch
-+Yes Man
-+Forrest Gump
-+50 First Dates
-+Bedtime Stories
-+October Skies
--Oppenheimer
--No Way Home
 -Into the Spiderverse
++Yes Man
 -Wonka,,,2023
++Forrest Gump
 -Little Women
++50 First Dates
 -Steve Jobs,,,2015
++Bedtime Stories
 -Sharknado
++October Skies
+-Sponge on the Run
++Twitches
+-Miss Americana
++Suite Life Movie
+-Encanto
++Boy in the Striped Pajamas
+-The Cobbler
++5 Feet Apart
+-Descendants
++Wizards of Waverly Place

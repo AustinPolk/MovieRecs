@@ -2,11 +2,32 @@ from typing import Callable
 from imdb import Cinemagoer
 import numpy as np
 from spacy import Language, load
-from gensim import downloader, models
+from gensim import models
 import math
 from keras import Model, Sequential, layers, losses
-from sklearn import svm
+from sklearn.ensemble import RandomForestClassifier
 import pickle
+
+class Autoencoder(Model):
+  def __init__(self, input_size, hyperparameters):
+    super(Autoencoder, self).__init__()
+    self.latent_dim = hyperparameters["EncoderLatentDimensions"]
+    self.shape = (input_size,)
+    self.encoder = Sequential([
+        layers.Dense(hyperparameters["EncoderHiddenDimensions"], activation=hyperparameters["EncoderHiddenActivation"]),
+        layers.Dense(hyperparameters["EncoderLatentDimensions"], activation=hyperparameters["EncoderLatentActivation"]),
+    ])
+    self.decoder = Sequential([
+        layers.Dense(hyperparameters["DecoderHiddenDimensions"], activation=hyperparameters["DecoderHiddenActivation"]),
+        layers.Dense(input_size, activation=hyperparameters["DecoderFinalActivation"]),
+        layers.Reshape(self.shape)
+    ])
+    self.compile(optimizer='adam', loss=losses.MeanSquaredError())
+
+  def call(self, x):
+    encoded = self.encoder(x)
+    decoded = self.decoder(encoded)
+    return decoded
 
 def get_movies_from_binaries(filepaths: list[str]) -> dict[str, int]:
     movies = {}
@@ -47,7 +68,7 @@ def get_movie_ids(movies: dict[str, int]) -> dict[str, str]:
         else:
             print("Failure")
             continue
-        print("Found")
+        print(f"Found under id={result.movieID}")
         id = result.movieID
         movies_by_id[id] = movie
     return movies_by_id
@@ -293,63 +314,6 @@ def train_feature_encoder(encoder: Model, keyword_vectors: dict[str, np.ndarray]
 
     return encoder
 
-class UserModel:
-    def __init__(self, pos: svm.OneClassSVM, neg: svm.OneClassSVM):
-        self.pos_classifier: svm.SVC = pos
-        self.neg_classifier: svm.SVC = neg
-        self.pos_weight: float = 1.0
-        self.neg_weight: float = 1.0
-        self.has_pos: bool = True
-        self.has_neg: bool = True
-
-    def fit(self, pX, pY, nX, nY):
-        if not pX:
-            self.has_pos = False
-        if not nX:
-            self.has_neg = False 
-        
-        if self.has_pos:
-            self.pos_classifier.fit(pX)
-            pscore = sum(self.pos_classifier.score_samples(pX)) / (100 * len(pX))
-            self.pos_weight = pscore
-
-        if self.has_neg:
-            self.neg_classifier.fit(nX)
-            nscore = sum(self.neg_classifier.score_samples(nX)) / (100 * len(nX))
-            self.neg_weight = nscore
-    
-    def _sigmoid(self, x):
-        return 1 / (1 + math.exp(-x))
-
-    def predict(self, X):
-        p_pred = self.pos_classifier.predict(X) if self.has_pos else 0
-        n_pred = self.neg_classifier.predict(X) if self.has_neg else 0
-        total = p_pred[0] * self.pos_weight + n_pred[0] * self.neg_weight
-        return self._sigmoid(total)
-
-def train_user_model(pos_classifier: svm.SVC, neg_classifier: svm.SVC, feature_vectors: dict[str, np.ndarray], user_preferences: dict[str, int]) -> UserModel:
-    pos_X = []
-    pos_Y = []
-    neg_X = []
-    neg_Y = []
-
-    for id, preference in user_preferences.items():
-        if id not in feature_vectors:
-            continue
-        
-        vec = feature_vectors[id]
-        if preference:
-            pos_X.append(vec)
-            pos_Y.append(1)
-        else:
-            neg_X.append(vec)
-            neg_Y.append(1)
-
-    userModel = UserModel(pos_classifier, neg_classifier)
-    userModel.fit(pos_X, pos_Y, neg_X, neg_Y)
-
-    return userModel
-
 def get_user_preferences(preference_file: str) -> dict[str, int]:
     movies = {}
     preferences = []
@@ -377,4 +341,93 @@ def get_user_preferences(preference_file: str) -> dict[str, int]:
 
     return user_preferences
 
-            
+class MovieReviews:
+
+    def __init__(self, hyperparameters: dict):
+        self.HyperParameters: dict = hyperparameters
+        self.KeywordList: list[str]
+        self.AutoEncoder: Autoencoder
+        self.Classifier: RandomForestClassifier
+
+    def train_encoder(self, dataFiles: list[str] | None = None) -> None:
+        # read from existing binary files to get names of movies for training data
+        if dataFiles:
+            movies = get_movies_from_binaries(dataFiles)
+
+        # get the IMDb Ids of as many of these movies as possible
+        movies_by_id = unpickle("movies_by_id.bin")
+        if not movies_by_id:
+            movies_by_id = get_movie_ids(movies)
+        ids = list(movies_by_id.keys())
+
+        # get the plots of as many movies as possible, update which Ids have plots
+        plots_by_id = unpickle("plots_by_id.bin")
+        if not plots_by_id:
+            plots_by_id = get_movie_plots(ids)
+        ids = list(plots_by_id.keys())
+
+        # get the keywords in each plot and convert them into keyword vectors for each movie
+        keywords_by_id = get_plots_keywords(plots_by_id, adjectives=self.HyperParameters["UseAdjectives"])
+        keyword_counts = get_keyword_counts(keywords_by_id)
+        self.KeywordList = trim_keyword_list(keyword_counts, min_occurrences=self.HyperParameters["MinKeywordOccurrences"], max_occurrences=self.HyperParameters["MaxKeywordOccurrences"])
+        keyword_vectors = get_movie_keyword_vectors(self.KeywordList, keywords_by_id)
+
+        # assemble the keyword vectors into training features for the autoencoder
+        input_features = []
+        for _, vec in keyword_vectors.items():
+            input_features.append(vec)
+        input_features = np.array(input_features)
+
+        # create and train the autoencoder
+        self.AutoEncoder = Autoencoder(len(self.KeywordList), self.HyperParameters)
+        self.AutoEncoder.fit(x = input_features, y = input_features, epochs = self.HyperParameters["EncoderEpochs"], shuffle = True)
+
+    def train_user_classifier(self, userFile: str) -> None:
+        User = get_user_preferences(userFile)
+
+        user_ids = list(User.keys())
+        user_plots = get_movie_plots(user_ids)
+        user_ids = list(user_plots.keys())
+        user_preferences = {}
+        for id, pref in User.items():
+            if id in user_ids:
+                user_preferences[id] = pref
+
+        user_keywords = get_plots_keywords(user_plots, adjectives=self.HyperParameters["UseAdjectives"])
+        user_keyword_vectors = get_movie_keyword_vectors(self.KeywordList, user_keywords)
+
+        user_features = []
+        for _, vec in user_keyword_vectors.items():
+            user_features.append(vec)
+        user_features = np.array(user_features)
+
+        user_encoded = self.AutoEncoder.encoder(user_features).numpy()
+        preferences = np.array(list(user_preferences.values()))
+
+        self.Classifier = RandomForestClassifier(max_depth=self.HyperParameters["ClassifierMaxDepth"], n_estimators=self.HyperParameters["ClassifierEstimators"], random_state=26)
+        self.Classifier = self.Classifier.fit(X = user_encoded, y = preferences)
+
+    def predict(self, movie_title: str, movie_year: str) -> tuple[np.ndarray, np.ndarray]:
+        movie = {movie_title: movie_year}
+
+        movie_id = get_movie_ids(movie)
+        movie_plot = get_movie_plots(movie_id)
+
+        if not movie_plot:
+            print(f"Could not retrieve plot data for {movie_title}, aborting...")
+            return (None, None)
+
+        keywords = get_plots_keywords(movie_plot, adjectives=self.HyperParameters["UseAdjectives"])
+        keyword_vector = get_movie_keyword_vectors(self.KeywordList, keywords)
+        
+        feature = []
+        for _, vec in keyword_vector.items():
+            feature.append(vec)
+        feature = np.array(feature).reshape(1, -1)
+
+        encoded = self.AutoEncoder.encoder(feature).numpy()
+
+        result = self.Classifier.predict(encoded)
+        proba = self.Classifier.predict_proba(encoded)
+
+        return result, proba
