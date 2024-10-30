@@ -5,7 +5,7 @@ from spacy import Language, load
 from gensim import models
 import math
 from keras import Model, Sequential, layers, losses
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 import pickle
 
 class Autoencoder(Model):
@@ -48,6 +48,13 @@ def unpickle(filepath: str):
     except:
         p = None
     return p
+
+def dopickle(filepath: str, thing):
+    try:
+        with open(filepath, "wb+") as f:
+            p = pickle.dump(thing, f)
+    except:
+        return
 
 def get_movie_ids(movies: dict[str, int]) -> dict[str, str]:
     movies_by_id = {}
@@ -348,29 +355,39 @@ class MovieReviews:
         self.KeywordList: list[str]
         self.AutoEncoder: Autoencoder
         self.Classifier: RandomForestClassifier
+        self.Regressor: RandomForestRegressor
 
-    def train_encoder(self, dataFiles: list[str] | None = None) -> None:
+    def train_encoder(self, dataFiles: list[str] | None = None, use_cached_results: bool = True) -> None:
         # read from existing binary files to get names of movies for training data
         if dataFiles:
             movies = get_movies_from_binaries(dataFiles)
 
         # get the IMDb Ids of as many of these movies as possible
-        movies_by_id = unpickle("movies_by_id.bin")
+        movies_by_id = unpickle("cache\\movies_by_id.bin")
         if not movies_by_id:
             movies_by_id = get_movie_ids(movies)
+            dopickle("cache\\movies_by_id.bin", movies_by_id)
         ids = list(movies_by_id.keys())
 
         # get the plots of as many movies as possible, update which Ids have plots
-        plots_by_id = unpickle("plots_by_id.bin")
+        plots_by_id = unpickle("cache\\plots_by_id.bin")
         if not plots_by_id:
             plots_by_id = get_movie_plots(ids)
+            dopickle("cache\\plots_by_id.bin", plots_by_id)
         ids = list(plots_by_id.keys())
 
-        # get the keywords in each plot and convert them into keyword vectors for each movie
-        keywords_by_id = get_plots_keywords(plots_by_id, adjectives=self.HyperParameters["UseAdjectives"])
-        keyword_counts = get_keyword_counts(keywords_by_id)
-        self.KeywordList = trim_keyword_list(keyword_counts, min_occurrences=self.HyperParameters["MinKeywordOccurrences"], max_occurrences=self.HyperParameters["MaxKeywordOccurrences"])
-        keyword_vectors = get_movie_keyword_vectors(self.KeywordList, keywords_by_id)
+        self.KeywordList = unpickle("cache\\keyword_list.bin")
+        keyword_vectors = unpickle("cache\\keyword_vectors.bin")
+        if not self.KeywordList or not keyword_vectors or not use_cached_results:
+            # get the keywords in each plot and convert them into keyword vectors for each movie
+            keywords_by_id = get_plots_keywords(plots_by_id, adjectives=self.HyperParameters["UseAdjectives"])
+            keyword_counts = get_keyword_counts(keywords_by_id)
+            
+            self.KeywordList = trim_keyword_list(keyword_counts, min_occurrences=self.HyperParameters["MinKeywordOccurrences"], max_occurrences=self.HyperParameters["MaxKeywordOccurrences"])
+            dopickle("cache\\keyword_list.bin", self.KeywordList)
+
+            keyword_vectors = get_movie_keyword_vectors(self.KeywordList, keywords_by_id)
+            dopickle("cache\\keyword_vectors.bin", keyword_vectors)
 
         # assemble the keyword vectors into training features for the autoencoder
         input_features = []
@@ -382,30 +399,39 @@ class MovieReviews:
         self.AutoEncoder = Autoencoder(len(self.KeywordList), self.HyperParameters)
         self.AutoEncoder.fit(x = input_features, y = input_features, epochs = self.HyperParameters["EncoderEpochs"], shuffle = True)
 
-    def train_user_classifier(self, userFile: str) -> None:
-        User = get_user_preferences(userFile)
+    def train_user_classifier(self, userFile: str, use_cached_results: bool = True) -> None:
+        self.Classifier = unpickle("cache\\user_classifier.bin")
+        self.Regressor = unpickle("cache\\user_regressor.bin")
 
-        user_ids = list(User.keys())
-        user_plots = get_movie_plots(user_ids)
-        user_ids = list(user_plots.keys())
-        user_preferences = {}
-        for id, pref in User.items():
-            if id in user_ids:
-                user_preferences[id] = pref
+        if not self.Classifier or not self.Regressor or not use_cached_results:    
+            User = get_user_preferences(userFile)
 
-        user_keywords = get_plots_keywords(user_plots, adjectives=self.HyperParameters["UseAdjectives"])
-        user_keyword_vectors = get_movie_keyword_vectors(self.KeywordList, user_keywords)
+            user_ids = list(User.keys())
+            user_plots = get_movie_plots(user_ids)
+            user_ids = list(user_plots.keys())
+            user_preferences = {}
+            for id, pref in User.items():
+                if id in user_ids:
+                    user_preferences[id] = pref
 
-        user_features = []
-        for _, vec in user_keyword_vectors.items():
-            user_features.append(vec)
-        user_features = np.array(user_features)
+            user_keywords = get_plots_keywords(user_plots, adjectives=self.HyperParameters["UseAdjectives"])
+            user_keyword_vectors = get_movie_keyword_vectors(self.KeywordList, user_keywords)
 
-        user_encoded = self.AutoEncoder.encoder(user_features).numpy()
-        preferences = np.array(list(user_preferences.values()))
+            user_features = []
+            for _, vec in user_keyword_vectors.items():
+                user_features.append(vec)
+            user_features = np.array(user_features)
 
-        self.Classifier = RandomForestClassifier(max_depth=self.HyperParameters["ClassifierMaxDepth"], n_estimators=self.HyperParameters["ClassifierEstimators"], random_state=26)
-        self.Classifier = self.Classifier.fit(X = user_encoded, y = preferences)
+            user_encoded = self.AutoEncoder.encoder(user_features).numpy()
+            preferences = np.array(list(user_preferences.values()))
+
+            self.Classifier = RandomForestClassifier(max_depth=self.HyperParameters["ClassifierMaxDepth"], n_estimators=self.HyperParameters["ClassifierEstimators"], random_state=26)
+            self.Classifier = self.Classifier.fit(X = user_encoded, y = preferences)
+            dopickle("cache\\user_classifier.bin", self.Classifier)
+
+            self.Regressor = RandomForestRegressor(max_depth=self.HyperParameters["ClassifierMaxDepth"], n_estimators=self.HyperParameters["ClassifierEstimators"], random_state=26)
+            self.Regressor = self.Regressor.fit(X = user_encoded, y = preferences)
+            dopickle("cache\\user_regressor.bin", self.Regressor)
 
     def predict(self, movie_title: str, movie_year: str) -> tuple[np.ndarray, np.ndarray]:
         movie = {movie_title: movie_year}
@@ -429,5 +455,6 @@ class MovieReviews:
 
         result = self.Classifier.predict(encoded)
         proba = self.Classifier.predict_proba(encoded)
+        reg = self.Regressor.predict(encoded)
 
-        return result, proba
+        return result, proba, reg
