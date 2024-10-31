@@ -4,30 +4,40 @@ import numpy as np
 from spacy import Language, load
 from gensim import models
 import math
-from keras import Model, Sequential, layers, losses
+from keras import Model, Sequential, layers, losses, saving
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 import pickle
+import random
+import os
 
 class Autoencoder(Model):
-  def __init__(self, input_size, hyperparameters):
-    super(Autoencoder, self).__init__()
-    self.latent_dim = hyperparameters["EncoderLatentDimensions"]
-    self.shape = (input_size,)
-    self.encoder = Sequential([
-        layers.Dense(hyperparameters["EncoderHiddenDimensions"], activation=hyperparameters["EncoderHiddenActivation"]),
-        layers.Dense(hyperparameters["EncoderLatentDimensions"], activation=hyperparameters["EncoderLatentActivation"]),
-    ])
-    self.decoder = Sequential([
-        layers.Dense(hyperparameters["DecoderHiddenDimensions"], activation=hyperparameters["DecoderHiddenActivation"]),
-        layers.Dense(input_size, activation=hyperparameters["DecoderFinalActivation"]),
-        layers.Reshape(self.shape)
-    ])
-    self.compile(optimizer='adam', loss=losses.MeanSquaredError())
+    def __init__(self, input_size: int, hyperparameters: dict):
+        super(Autoencoder, self).__init__()
+        self.input_size = input_size
+        self.hyperparameters = hyperparameters
+        self.latent_dim = hyperparameters["EncoderLatentDimensions"]
+        self.shape = (input_size,)
+        self.encoder = Sequential([
+            layers.Dense(hyperparameters["EncoderHiddenDimensions"], activation=hyperparameters["EncoderHiddenActivation"]),
+            layers.Dense(hyperparameters["EncoderLatentDimensions"], activation=hyperparameters["EncoderLatentActivation"]),
+        ])
+        self.decoder = Sequential([
+            layers.Dense(hyperparameters["DecoderHiddenDimensions"], activation=hyperparameters["DecoderHiddenActivation"]),
+            layers.Dense(input_size, activation=hyperparameters["DecoderFinalActivation"]),
+            layers.Reshape(self.shape)
+        ])
+        self.compile(optimizer='adam', loss=losses.MeanSquaredError())
 
-  def call(self, x):
-    encoded = self.encoder(x)
-    decoded = self.decoder(encoded)
-    return decoded
+    def get_config(self):
+        return {
+            'input_size': self.input_size,
+            'hyperparameters': self.hyperparameters
+        }
+    
+    def call(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded
 
 def get_movies_from_binaries(filepaths: list[str]) -> dict[str, int]:
     movies = {}
@@ -329,7 +339,7 @@ def get_user_preferences(preference_file: str) -> dict[str, int]:
         for line in lines:
             stripped = line.strip().split(",,,")
             
-            liked = 1 if stripped[0][0] == "+" else 0
+            liked = 1 if stripped[0][0] == "+" else -1
             preferences.append(liked)
 
             title = stripped[0][1:]
@@ -352,10 +362,14 @@ class MovieReviews:
 
     def __init__(self, hyperparameters: dict):
         self.HyperParameters: dict = hyperparameters
-        self.KeywordList: list[str]
-        self.AutoEncoder: Autoencoder
-        self.Classifier: RandomForestClassifier
-        self.Regressor: RandomForestRegressor
+        self.KeywordList: list[str] = None
+        self.AutoEncoder: Autoencoder = None
+        self.EncodedMovieBank: dict[str, np.ndarray] = None
+        self.Classifier: RandomForestClassifier = None
+        self.Regressor: RandomForestRegressor = None
+        self.UserKnownIds: list[str] = None
+        self.UserName: str = None
+        self.UserFolder: str = None
 
     def train_encoder(self, dataFiles: list[str] | None = None, use_cached_results: bool = True) -> None:
         # read from existing binary files to get names of movies for training data
@@ -396,17 +410,64 @@ class MovieReviews:
         input_features = np.array(input_features)
 
         # create and train the autoencoder
-        self.AutoEncoder = Autoencoder(len(self.KeywordList), self.HyperParameters)
-        self.AutoEncoder.fit(x = input_features, y = input_features, epochs = self.HyperParameters["EncoderEpochs"], shuffle = True)
+        if os.path.exists("cache\\autoencoder.keras"):
+            self.AutoEncoder = saving.load_model("cache\\autoencoder.keras")
 
-    def train_user_classifier(self, userFile: str, use_cached_results: bool = True) -> None:
-        self.Classifier = unpickle("cache\\user_classifier.bin")
-        self.Regressor = unpickle("cache\\user_regressor.bin")
+        if not self.AutoEncoder:
+            self.AutoEncoder = Autoencoder(len(self.KeywordList), self.HyperParameters)
+            self.AutoEncoder.fit(x = input_features, y = input_features, epochs = self.HyperParameters["EncoderEpochs"], shuffle = True)
+            saving.save_model(self.AutoEncoder, "cache\\autoencoder.keras")
 
-        if not self.Classifier or not self.Regressor or not use_cached_results:    
-            User = get_user_preferences(userFile)
+        all_encoded = self.AutoEncoder.encoder(input_features).numpy()
+        self.EncodedMovieBank = {}        
+        for id, encoded in zip(ids, all_encoded):
+            self.EncodedMovieBank[id] = encoded
 
+    def set_user(self, username: str) -> None:
+        self.UserName = username.lower()
+        self.UserFolder = os.path.join("users", self.UserName)
+        if not os.path.exists(self.UserFolder):
+           os.makedirs(self.UserFolder)
+
+    def get_user_movies(self):
+        pass # start a console session, ask user movies they like and dislike
+
+    def get_movie_id(self, title: str, year: int) -> str:
+        m = {title : year}
+        id = list(get_movie_ids(m).keys())[0]
+        return id
+
+    def add_user_like(self, id: str) -> None:
+        preferenceFile = os.path.join(self.UserFolder, "preferences.bin")
+        if not os.path.exists(preferenceFile):
+            preferences = {id : 1}
+        else:
+            preferences = unpickle(preferenceFile)
+            preferences[id] = 1
+        dopickle(preferenceFile, preferences)
+
+    def add_user_dislike(self, id: str) -> None:
+        preferenceFile = os.path.join(self.UserFolder, "preferences.bin")
+        if not os.path.exists(preferenceFile):
+            preferences = {id : -1}
+        else:
+            preferences = unpickle(preferenceFile)
+            preferences[id] = -1
+        dopickle(preferenceFile, preferences)
+
+    def train_user_classifier(self, use_cached_results: bool = True) -> None:
+        self.Classifier = unpickle(os.path.join(self.UserFolder, "user_classifier.bin"))
+        self.Regressor = unpickle(os.path.join(self.UserFolder, "user_regressor.bin"))
+        self.UserKnownIds = unpickle(os.path.join(self.UserFolder, "user_known_ids.bin"))
+
+        if not self.Classifier or not self.Regressor or not self.UserKnownIds or not use_cached_results:    
+            User = unpickle(os.path.join(self.UserFolder, "preferences.bin"))
+            
             user_ids = list(User.keys())
+
+            self.UserKnownIds = list(user_ids)
+            dopickle(os.path.join(self.UserFolder,"user_known_ids.bin"), self.UserKnownIds)
+
             user_plots = get_movie_plots(user_ids)
             user_ids = list(user_plots.keys())
             user_preferences = {}
@@ -427,13 +488,13 @@ class MovieReviews:
 
             self.Classifier = RandomForestClassifier(max_depth=self.HyperParameters["ClassifierMaxDepth"], n_estimators=self.HyperParameters["ClassifierEstimators"], random_state=26)
             self.Classifier = self.Classifier.fit(X = user_encoded, y = preferences)
-            dopickle("cache\\user_classifier.bin", self.Classifier)
+            dopickle(os.path.join(self.UserFolder, "user_classifier.bin"), self.Classifier)
 
             self.Regressor = RandomForestRegressor(max_depth=self.HyperParameters["ClassifierMaxDepth"], n_estimators=self.HyperParameters["ClassifierEstimators"], random_state=26)
             self.Regressor = self.Regressor.fit(X = user_encoded, y = preferences)
-            dopickle("cache\\user_regressor.bin", self.Regressor)
+            dopickle(os.path.join(self.UserFolder,"user_regressor.bin"), self.Regressor)
 
-    def predict(self, movie_title: str, movie_year: str) -> tuple[np.ndarray, np.ndarray]:
+    def predict(self, movie_title: str, movie_year: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         movie = {movie_title: movie_year}
 
         movie_id = get_movie_ids(movie)
@@ -458,3 +519,71 @@ class MovieReviews:
         reg = self.Regressor.predict(encoded)
 
         return result, proba, reg
+    
+    def predict_encoded(self, encoded: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        result = self.Classifier.predict(encoded)
+        proba = self.Classifier.predict_proba(encoded)
+        reg = self.Regressor.predict(encoded)
+
+        return result, proba, reg
+    
+    def recommend(self, top_n = 5, ranked = True):
+        could_recommend = {}
+        for id, encoded in self.EncodedMovieBank.items():
+            if id not in self.UserKnownIds:
+                could_recommend[id] = encoded
+        
+        would_recommend = {}
+        for id, encoded in could_recommend.items():
+            will_like, _, how_much = self.predict_encoded(encoded.reshape(1, -1))
+            if will_like[0] == 1:
+                would_recommend[id] = how_much
+
+        recommended_ids = list(would_recommend.keys())
+        if ranked:
+            recommended_ids = sorted(recommended_ids, key = lambda id: would_recommend[id], reverse=True)
+        else:
+            random.shuffle(recommended_ids)
+
+        will_recommend = recommended_ids[:top_n]
+        movies_by_id = unpickle("cache\\movies_by_id.bin")
+
+        recommended_titles = []
+        for id in will_recommend:
+            title = movies_by_id[id]
+            recommended_titles.append(title)
+        
+        return recommended_titles
+
+    def described(self, description, top_n = 5):
+        # first process the description and get a keyword vector
+        keywords = get_plots_keywords({"desc": description}, adjectives=self.HyperParameters["UseAdjectives"])
+        vector = get_movie_keyword_vectors(self.KeywordList, keywords)
+
+        # then encode it
+        feature = []
+        for _, vec in vector.items():
+            feature.append(vec)
+        feature = np.array(feature).reshape(1, -1)
+
+        encoded_desc = self.AutoEncoder.encoder(feature).numpy()
+
+        # then compare to the movie bank
+        distances = {}
+        for id, encoded_movie in self.EncodedMovieBank.items():
+            distance = np.linalg.norm(encoded_desc - encoded_movie,ord = 2)
+            distances[id] = distance
+
+        # return the top_n closest movies to that described
+        movie_ids = list(distances.keys())
+        movie_ids = sorted(movie_ids, key = lambda id: distances[id])
+
+        closest = movie_ids[:top_n]
+        movies_by_id = unpickle("cache\\movies_by_id.bin")
+
+        closest_titles = []
+        for id in closest:
+            title = movies_by_id[id]
+            closest_titles.append(title)
+
+        return closest_titles
