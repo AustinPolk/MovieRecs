@@ -176,9 +176,7 @@ class Trainer:
     def plot_autoencoding(self, plot_str: str):
         plot_encoding = self.assemble_plot_encoding(plot_str)
 
-        input_features = []
-        for _, vec in plot_encoding.items():
-            input_features.append(vec)
+        input_features = [plot_encoding]
         input_features = np.array(input_features)
 
         encoded = self.AutoEncoder.encoder(input_features).numpy()

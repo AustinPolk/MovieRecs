@@ -43,14 +43,15 @@ class Recommender:
             self.EncodedMovies[id] = self.Trainer.plot_autoencoding(plot_str)
 
     def LoadOrTrainAndSave(self, hyperparameters: dict):
+        self.Loader = Loader()
+        cached_plots = self.Loader.load_cached_plots()
+        
         try:
             with open("cache\\trainer.bin", "rb") as f:
                 self.Trainer = pickle.load(f)
             print("Loading existing trainer")
         except:
             print("Creating new trainer")
-            self.Loader = Loader()
-            cached_plots = self.Loader.load_cached_plots()
 
             self.Trainer = Trainer()
             self.Trainer.train_clusterings(cached_plots, 
@@ -111,15 +112,15 @@ class Recommender:
             return dot_prod / (s_mag * t_mag)**(1/2)
 
     def Describe(self, description: str, similarity_method: str, top_n: int = 5): 
-        described = self.Trainer.plot_autoencoding(description)
+        described = self.Trainer.plot_autoencoding(description)[0]
 
         sim_scores = {}
         for id, encoding in self.EncodedMovies.items():
-            similarity = self._encoding_similarity(described, encoding, method=similarity_method)
+            similarity = self._encoding_similarity(described, encoding[0], method=similarity_method)
             sim_scores[id] = similarity
 
         ranked = list(self.EncodedMovies.keys())
-        ranked = sorted(ranked, key=lambda x: sim_scores[x], reverse=True)
+        ranked.sort(key=lambda x: sim_scores[x], reverse=True)
 
         top_ids = ranked[:top_n]
         top_titles = [self.MovieTitles[id] for id in top_ids]
