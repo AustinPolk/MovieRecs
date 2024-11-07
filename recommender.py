@@ -110,16 +110,40 @@ class Recommender:
                 s_mag += e_s[i] * e_s[i]
                 t_mag += e_t[i] * e_t[i]
             return dot_prod / (s_mag * t_mag)**(1/2)
+        if method == "equals":
+            matches = 0
+            delta = 0.01
+            for i in range(e_s.shape[0]):
+                if e_s[i] + e_t[i] == 0:
+                    continue
+                if abs(e_s[i] - e_t[i]) <= delta:
+                    matches += 1
+            return matches
 
     def Describe(self, description: str, similarity_method: str, top_n: int = 5): 
-        described = self.Trainer.plot_autoencoding(description)[0]
+        
+        if similarity_method == "equals":
+            described = self.Trainer.assemble_plot_encoding(description)
+        else:
+            described = self.Trainer.plot_autoencoding(description)[0]
+
+        ids = list(self.EncodedMovies.keys())
 
         sim_scores = {}
-        for id, encoding in self.EncodedMovies.items():
-            similarity = self._encoding_similarity(described, encoding[0], method=similarity_method)
-            sim_scores[id] = similarity
+        if similarity_method == "equals":
+            self.Loader = Loader()
+            cached_plots = self.Loader.load_cached_plots()
 
-        ranked = list(self.EncodedMovies.keys())
+            for id, plot_str in cached_plots.items():
+                that_encoding = self.Trainer.assemble_plot_encoding(plot_str)
+                similarity = self._encoding_similarity(described, that_encoding, method=similarity_method)
+                sim_scores[id] = similarity
+        else:
+            for id, encoding in self.EncodedMovies.items():
+                similarity = self._encoding_similarity(described, encoding[0], method=similarity_method)
+                sim_scores[id] = similarity
+
+        ranked = list(ids)
         ranked.sort(key=lambda x: sim_scores[x], reverse=True)
 
         top_ids = ranked[:top_n]
