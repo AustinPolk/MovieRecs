@@ -84,12 +84,25 @@ class Trainer:
         tokenized_plot = self.LanguageModel(plot_str)
         count = len(tokenized_plot)
 
+        # some helpers to check if a pair of words has already been assessed
+        hash = lambda x, y: x * count + y
+        checked = set()
+        checked_already = lambda h: (h in checked)
+
         for starting_index in range(count - self.ContextWindowSize + 1):
             ending_index = starting_index + self.ContextWindowSize
             window = tokenized_plot[starting_index:ending_index + 1]
             window_end = self.ContextWindowSize - 1
             for window_s_index in range(window_end):
                 for window_t_index in range(window_s_index + 1, window_end):
+                    
+                    # check if this pair has already been assessed, skip if so
+                    pair_hash = hash(window_s_index, window_t_index)
+                    if checked_already(pair_hash):
+                        continue
+                    else:
+                        checked.add(pair_hash)
+
                     # s and t represent the two halves of each word pair in the window
                     s = window[window_s_index]
                     t = window[window_t_index]
@@ -158,7 +171,7 @@ class Trainer:
         print("Training autoencoder")
         self.AutoEncoder = Autoencoder(input_features[0].shape[0], layer_sizes, layer_activations)
 
-        self.AutoEncoder.fit(input_features, input_features, epochs=100, shuffle=True)
+        self.AutoEncoder.fit(input_features, input_features, epochs=20, shuffle=True)
 
     def plot_autoencoding(self, plot_str: str):
         plot_encoding = self.assemble_plot_encoding(plot_str)

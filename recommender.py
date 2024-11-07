@@ -42,6 +42,39 @@ class Recommender:
         for id, plot_str in cached_plots.items():
             self.EncodedMovies[id] = self.Trainer.plot_autoencoding(plot_str)
 
+    def LoadOrTrainAndSave(self, hyperparameters: dict):
+        try:
+            with open("cache\\trainer.bin", "rb") as f:
+                self.Trainer = pickle.load(f)
+            print("Loading existing trainer")
+        except:
+            print("Creating new trainer")
+            self.Loader = Loader()
+            cached_plots = self.Loader.load_cached_plots()
+
+            self.Trainer = Trainer()
+            self.Trainer.train_clusterings(cached_plots, 
+                                        hyperparameters['Clusters'])
+            self.Trainer.train_autoencoder(cached_plots, 
+                                        hyperparameters['ContextWindow'], 
+                                        hyperparameters['AutoEncoderLayers'], 
+                                        hyperparameters['AutoEncoderActivations'])
+        
+            with open("cache\\trainer.bin", "wb+") as f:
+                pickle.dump(self.Trainer, f)
+        
+        try:
+            with open("cache\\encoded_movies.bin", "rb+") as f:
+                self.EncodedMovies = pickle.load(f)
+            print("Loading existing movie embeddings")
+        except:
+            print("Creating movie embeddings")
+            for id, plot_str in cached_plots.items():
+                self.EncodedMovies[id] = self.Trainer.plot_autoencoding(plot_str)
+
+            with open("cache\\encoded_movies.bin", "wb+") as f:
+                pickle.dump(self.EncodedMovies, f)
+
     # return the similarity between two vectors using the given method, the higher the more similar
     def _encoding_similarity(self, e_s: np.ndarray, e_t: np.ndarray, method: str):
         smoothing = 0.001   # ensures no division by zero errors
