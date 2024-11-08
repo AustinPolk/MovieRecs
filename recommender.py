@@ -13,40 +13,13 @@ class Recommender:
         with open("cache\\movies_by_id.bin", "rb") as f:
             self.MovieTitles = pickle.load(f)
 
-    def Save(self):
-        with open("cache\\trainer.bin", "wb+") as f:
-            pickle.dump(self.Trainer, f)
-        with open("cache\\encoded_movies.bin", "wb+") as f:
-            pickle.dump(self.EncodedMovies, f)
-
-    def Load(self):
-        with open("cache\\trainer.bin", "rb") as f:
-            self.Trainer = pickle.load(f)
-        with open("cache\\encoded_movies.bin", "rb+") as f:
-            self.EncodedMovies = pickle.load(f)
-        self.Loader = Loader()
-
-    def TrainNew(self, hyperparameters: dict):
-        self.Loader = Loader()
-        cached_plots = self.Loader.load_cached_plots()
-
-        self.Trainer = Trainer()
-        self.Trainer.train_clusterings(cached_plots, 
-                                       hyperparameters['Clusters'])
-        self.Trainer.train_autoencoder(cached_plots, 
-                                       hyperparameters['ContextWindow'], 
-                                       hyperparameters['AutoEncoderLayers'], 
-                                       hyperparameters['AutoEncoderActivations'])
-        
-        # also encode all the known movie plots
-        for id, plot_str in cached_plots.items():
-            self.EncodedMovies[id] = self.Trainer.plot_autoencoding(plot_str)
-
-    def LoadOrTrainAndSave(self, hyperparameters: dict):
+    def LoadOrTrainAndSave(self, hyperparameters: dict, alwaysTrain: bool = False):
         self.Loader = Loader()
         cached_plots = self.Loader.load_cached_plots()
         
         try:
+            if alwaysTrain:
+                raise
             with open("cache\\trainer.bin", "rb") as f:
                 self.Trainer = pickle.load(f)
             print("Loading existing trainer")
@@ -56,22 +29,27 @@ class Recommender:
             self.Trainer = Trainer()
             self.Trainer.train_clusterings(cached_plots, 
                                         hyperparameters['Clusters'])
-            self.Trainer.train_autoencoder(cached_plots, 
-                                        hyperparameters['ContextWindow'], 
-                                        hyperparameters['AutoEncoderLayers'], 
-                                        hyperparameters['AutoEncoderActivations'])
-        
+            
+            if hyperparameters["TrainAutoEncoder"]:
+                print("Training autoencoder")
+                self.Trainer.train_autoencoder(cached_plots, 
+                                            hyperparameters['ContextWindow'], 
+                                            hyperparameters['AutoEncoderLayers'], 
+                                            hyperparameters['AutoEncoderActivations'])
+
             with open("cache\\trainer.bin", "wb+") as f:
                 pickle.dump(self.Trainer, f)
         
         try:
+            if alwaysTrain:
+                raise
             with open("cache\\encoded_movies.bin", "rb+") as f:
                 self.EncodedMovies = pickle.load(f)
             print("Loading existing movie embeddings")
         except:
             print("Creating movie embeddings")
             for id, plot_str in cached_plots.items():
-                self.EncodedMovies[id] = self.Trainer.plot_autoencoding(plot_str)
+                self.EncodedMovies[id] = self.Trainer.plot_autoencoding(plot_str, no_auto=(not self.Trainer.TrainedAutoEncoder))
 
             with open("cache\\encoded_movies.bin", "wb+") as f:
                 pickle.dump(self.EncodedMovies, f)
@@ -110,13 +88,22 @@ class Recommender:
                 s_mag += e_s[i] * e_s[i]
                 t_mag += e_t[i] * e_t[i]
             return dot_prod / (s_mag * t_mag)**(1/2)
+        if method == "matching":
+            matches = 0
+            for i in range(e_s.shape[0]):
+                if e_s[i] == 0 and e_t[i] == 0:
+                    continue
+
+                if abs(e_s[i] - e_t[i]) < smoothing:
+                    matches += 1
+            return matches
 
     def Describe(self, description: str, similarity_method: str, top_n: int = 5): 
-        described = self.Trainer.plot_autoencoding(description)[0]
+        described = self.Trainer.plot_autoencoding(description, no_auto=(not self.Trainer.TrainedAutoEncoder))
 
         sim_scores = {}
         for id, encoding in self.EncodedMovies.items():
-            similarity = self._encoding_similarity(described, encoding[0], method=similarity_method)
+            similarity = self._encoding_similarity(described, encoding, method=similarity_method)
             sim_scores[id] = similarity
 
         ranked = list(self.EncodedMovies.keys())
