@@ -9,6 +9,12 @@ class Verboser:
     def __init__(self):
         _VERBOSE_ = True
 
+    def Yes(self):
+        _VERBOSE_ = True
+
+    def No(self):
+        _VERBOSE_ = False
+
 class MovieEncoding:
     def __init__(self):
         self.Nouns: set[int] = set()
@@ -64,6 +70,16 @@ class MovieEncoding:
 
         if _VERBOSE_:
             print(f"({word_pos}-{word_cluster}, {other_pos}-{other_cluster}) added")
+
+    def self_describe(self):
+        print(f"Nouns: {self.Nouns}")
+        print(f"Verbs: {self.Verbs}")
+        print(f"Adjectives: {self.Adjectives}")
+        print(f"Adverbs: {self.Adverbs}")
+        print(f"Noun-noun pairs: {self.Noun_Noun}")
+        print(f"Noun-adjective pairs: {self.Noun_Adjective}")
+        print(f"Noun-verb pairs: {self.Noun_Verb}")
+        print(f"Verb-adverb pairs: {self.Verb_Adverb}")      
 
 class EncodingSimilarity:
     def __init__(self):
@@ -262,7 +278,7 @@ class MovieEncoder:
         count = len(tokenized_plot)
 
         # some helpers to check if a pair of words has already been assessed
-        hash = lambda x, y: x * count + y
+        hash = lambda x, y: x * count + y if y < x else y * count + x
         checked = set()
         checked_already = lambda h: (h in checked)
 
@@ -273,7 +289,6 @@ class MovieEncoder:
             for window_s_index in range(window_end):
                 for window_t_index in range(window_s_index + 1, window_end):
                     
-                    # TODO: order these so that s is always lesser, t greater, then I can avoid checking pairs that are reverse ordered copies
                     s_index = starting_index + window_s_index
                     t_index = starting_index + window_t_index
 
@@ -302,8 +317,11 @@ class MovieEncoder:
                     encoding.add_single(t_cluster, t.pos_)
                     encoding.add_pair(s_cluster, s.pos_, t_cluster, t.pos_)
 
+        return encoding
+
     def digest(self, plots: dict[str, str], context_window: int):
         encodings = {}
         for plot_id, plot_str in plots.items():
+            print(f"Encoding movie with id {plot_id}")
             encodings[plot_id] = self.encode(plot_str, context_window)
         return encodings
