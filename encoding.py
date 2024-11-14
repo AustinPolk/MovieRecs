@@ -2,6 +2,7 @@ from spacy import Language, load
 from gensim import downloader
 from sklearn.cluster import KMeans
 import numpy as np
+from loader import Loader
 
 _VERBOSE_ = False
 
@@ -184,7 +185,6 @@ class WordClusterer:
         self.WordClasses: list[str] = ["NOUN", "VERB", "ADJ", "ADV"]
         self.Word2Vec = downloader.load("word2vec-google-news-300")
         self.Clusterings: dict[str, KMeans] = {}
-        self.ClusterCounts: dict[str, int] = {}
         self.ClusteringMemo: dict[(str, str), int] = {}
 
     def get_single_keyword_sets(self, plot_str: str):
@@ -221,19 +221,22 @@ class WordClusterer:
 
     def train_clusterings(self, plots: dict[str, str], cluster_sizes: dict[str, int]):
         keyword_lists = self.get_many_keyword_lists(plots)
-        
+
+        print("Keywords found:")        
         for word_class, keyword_list in keyword_lists.items():
             print(f"{word_class}: {len(keyword_list)}")
 
         all_vector_embeddings = {}
-        self.ClusterCounts = cluster_sizes
-
         for word_class in keyword_lists:
             all_vector_embeddings[word_class] = []
             for word in keyword_lists[word_class]:
                 if word in self.Word2Vec:
                     all_vector_embeddings[word_class].append(self.Word2Vec[word])
             all_vector_embeddings[word_class] = np.array(all_vector_embeddings[word_class])
+
+        print("Keywords with valid vector embeddings:")
+        for word_class in all_vector_embeddings:
+            print(f"{word_class}: {all_vector_embeddings[word_class].shape[0]}")
 
         for word_class in all_vector_embeddings:
             print(f"Clustering for {word_class} class")
@@ -254,6 +257,12 @@ class WordClusterer:
             self.ClusteringMemo[p] = cluster[0]
         
         return self.ClusteringMemo[p]
+
+    def save(self):
+        Loader().save(self.Clusterings, "clusterings")
+
+    def load(self):
+        self.Clusterings = Loader().load("clusterings")
 
 class MovieEncoder:
     def __init__(self, clusterer: WordClusterer):
