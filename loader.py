@@ -4,7 +4,7 @@ class Loader:
     def __init__(self):
         pass
 
-    def dopickle(filepath: str, thing):
+    def dopickle(self, filepath: str, thing):
         try:
             with open(filepath, "wb+") as f:
                 p = pickle.dump(thing, f)

@@ -3,6 +3,7 @@ from gensim import downloader
 from sklearn.cluster import KMeans
 import numpy as np
 from loader import Loader
+from fuzzywuzzy import fuzz
 
 _VERBOSE_ = False
 
@@ -219,7 +220,7 @@ class WordClusterer:
 
         return keyword_lists
 
-    def train_clusterings(self, plots: dict[str, str], cluster_sizes: dict[str, int]):
+    def train_clusterings(self, plots: dict[str, str]):
         keyword_lists = self.get_many_keyword_lists(plots)
 
         print("Keywords found:")        
@@ -238,9 +239,13 @@ class WordClusterer:
         for word_class in all_vector_embeddings:
             print(f"{word_class}: {all_vector_embeddings[word_class].shape[0]}")
 
+        print("Class cluster sizes:")
+        for word_class in all_vector_embeddings:
+            print(f"{word_class}: {all_vector_embeddings[word_class].shape[0] * 0.75}")
+
         for word_class in all_vector_embeddings:
             print(f"Clustering for {word_class} class")
-            clustering = KMeans(n_clusters=cluster_sizes[word_class], random_state=26)
+            clustering = KMeans(n_clusters=int(all_vector_embeddings[word_class].shape[0] * 0.75), random_state=26)
             clustering.fit(all_vector_embeddings[word_class])
             self.Clusterings[word_class] = clustering
 
@@ -338,3 +343,38 @@ class MovieComparison:
         ids = list(self.MovieBank.keys())
         sorted_ids = sorted(ids, key=lambda x: scores[x], reverse=True)
         return sorted_ids[:top_n]
+    
+class UserModel:
+    def __init__(self, similarity: EncodingSimilarity):
+        self.similarity: EncodingSimilarity = similarity
+        self.movie_bank: dict[str, MovieEncoding] = Loader().load("encoded_movie_bank")
+        self.liked_encodings: dict[str, MovieEncoding] = {}
+        self.disliked_encodings: dict[str, MovieEncoding] = {}
+        self.movie_titles: dict[str, str] = Loader().load_cached_titles()
+
+    def search_for(self, movie_title: str):
+        ids = list(self.movie_bank.keys())
+        sorted_ids = sorted(ids, key = lambda x: fuzz.partial_ratio(movie_title, self.movie_titles[x]), reverse=True)
+        return sorted_ids
+
+    def title_of(self, movie_id: str):
+        return self.movie_titles[movie_id]
+
+    def likedness(self, encoding: MovieEncoding):
+        total = 0
+        for _, liked in self.liked_encodings.items():
+            total += self.similarity.similarity_score(encoding, liked)
+        for _, disliked in self.disliked_encodings.items():
+            total -= self.similarity.similarity_score(encoding, disliked)
+    
+    def like(self, movie_id: str):
+        self.liked_encodings[movie_id] = self.movie_bank[movie_id]
+        
+    def dislike(self, movie_id: str):
+        self.disliked_encodings[movie_id] = self.movie_bank[movie_id]
+
+    def recommend(self, how_many: int = 5):
+        scores = {id: self.likedness(self.movie_bank[id]) for id in self.movie_bank}
+        ids = list(self.movie_bank.keys())
+        sorted_ids = sorted(ids, key=lambda x: scores[x], reverse=True)
+        return sorted_ids[:how_many]
