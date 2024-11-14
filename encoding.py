@@ -220,7 +220,8 @@ class WordClusterer:
 
         return keyword_lists
 
-    def train_clusterings(self, plots: dict[str, str]):
+    def train_clusterings(self):
+        plots = Loader().load_cached_plots()
         keyword_lists = self.get_many_keyword_lists(plots)
 
         print("Keywords found:")        
@@ -270,8 +271,8 @@ class WordClusterer:
         self.Clusterings = Loader().load("clusterings")
 
 class MovieEncoder:
-    def __init__(self, clusterer: WordClusterer):
-        self.Clusterer: WordClusterer = clusterer
+    def __init__(self):
+        self.Clusterer: WordClusterer = Loader().load("clusterings")
         self.LanguageModel: Language = load("en_core_web_sm")
         self.WordClasses: list[str] = ["NOUN", "VERB", "ADJ", "ADV"]
 
