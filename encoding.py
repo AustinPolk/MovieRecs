@@ -82,17 +82,7 @@ class MovieEncoding:
         print(f"Verb-adverb pairs: {self.Verb_Adverb}")      
 
 class EncodingSimilarity:
-    def __init__(self):
-        self.Nouns_Weight = 0.0
-        self.Verbs_Weight = 0.0
-        self.Adjectives_Weight = 0.0
-        self.Adverbs_Weight = 0.0
-        self.Noun_Noun_Weight = 0.0
-        self.Noun_Adjective_Weight = 0.0
-        self.Noun_Verb_Weight = 0.0
-        self.Verb_Adverb_Weight = 0.0
-
-    def set_weights(self, weights: dict[str, float]):
+    def __init__(self, weights: dict[str, float]):
         self.Nouns_Weight = weights["Nouns"]
         self.Verbs_Weight = weights["Verbs"]
         self.Adjectives_Weight = weights["Adjectives"]
@@ -164,8 +154,8 @@ class EncodingSimilarity:
 
         return total_score
 
-    def similarity_score(self, encoding: MovieEncoding, other_encoding: MovieEncoding):
-        if _VERBOSE_:
+    def similarity_score(self, encoding: MovieEncoding, other_encoding: MovieEncoding, verbose: bool = False):
+        if verbose:
             return self._verbose_similarity_score(encoding, other_encoding)
         
         nouns_score = self.Nouns_Weight * len(encoding.Nouns & other_encoding.Nouns)
@@ -232,6 +222,9 @@ class WordClusterer:
     def train_clusterings(self, plots: dict[str, str], cluster_sizes: dict[str, int]):
         keyword_lists = self.get_many_keyword_lists(plots)
         
+        for word_class, keyword_list in keyword_lists.items():
+            print(f"{word_class}: {len(keyword_list)}")
+
         all_vector_embeddings = {}
         self.ClusterCounts = cluster_sizes
 
@@ -263,19 +256,19 @@ class WordClusterer:
         return self.ClusteringMemo[p]
 
 class MovieEncoder:
-    def __init__(self):
-        self.Clusterer: WordClusterer
+    def __init__(self, clusterer: WordClusterer):
+        self.Clusterer: WordClusterer = clusterer
         self.LanguageModel: Language = load("en_core_web_sm")
         self.WordClasses: list[str] = ["NOUN", "VERB", "ADJ", "ADV"]
-    
-    def set_clusterer(self, clusterer: WordClusterer):
-        self.Clusterer = clusterer
 
-    def encode(self, plot_str: str, context_window: int):
+    def encode(self, plot_str: str, context_window: int, verbose: str = ''):
         encoding = MovieEncoding()
 
         tokenized_plot = self.LanguageModel(plot_str)
         count = len(tokenized_plot)
+
+        # adjust
+        context_window += 1
 
         # some helpers to check if a pair of words has already been assessed
         hash = lambda x, y: x * count + y if y < x else y * count + x
@@ -303,14 +296,14 @@ class MovieEncoder:
                     s = window[window_s_index]
                     t = window[window_t_index]
 
-                    if _VERBOSE_:
+                    if 'p' in verbose:
                         print(f"Considering the word pair {s.text}-{t.text}")
 
                     s_cluster = self.Clusterer.assign_cluster(s.lemma_, s.pos_)
-                    if _VERBOSE_ and s_cluster != -1:
+                    if 'c' in verbose and s_cluster != -1:
                         print(f"{s.lemma_}({s.text}) assigned to cluster {s.pos_}-{s_cluster}")
                     t_cluster = self.Clusterer.assign_cluster(t.lemma_, t.pos_)
-                    if _VERBOSE_ and t_cluster != -1:
+                    if 'c' in verbose and t_cluster != -1:
                         print(f"{t.lemma_}({t.text}) assigned to cluster {t.pos_}-{t_cluster}")
 
                     encoding.add_single(s_cluster, s.pos_)
@@ -325,3 +318,14 @@ class MovieEncoder:
             print(f"Encoding movie with id {plot_id}")
             encodings[plot_id] = self.encode(plot_str, context_window)
         return encodings
+    
+class MovieComparison:
+    def __init__(self, sim: EncodingSimilarity,movieBank: dict[str, MovieEncoding]):
+        self.MovieBank: dict[str, MovieEncoding] = movieBank
+        self.Similarity: EncodingSimilarity = sim
+
+    def closest(self, encoding: MovieEncoding, top_n: int = 5):
+        scores: dict[str, float] = {id: self.Similarity.similarity_score(encoding, self.MovieBank[id]) for id in self.MovieBank}
+        ids = list(self.MovieBank.keys())
+        sorted_ids = sorted(ids, key=lambda x: scores[x], reverse=True)
+        return sorted_ids[:top_n]
