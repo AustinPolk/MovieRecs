@@ -2,7 +2,7 @@ from spacy import Language, load
 from gensim import downloader
 from sklearn.cluster import KMeans
 import numpy as np
-from loader import Loader
+import loader
 from fuzzywuzzy import fuzz
 
 _VERBOSE_ = False
@@ -221,7 +221,7 @@ class WordClusterer:
         return keyword_lists
 
     def train_clusterings(self):
-        plots = Loader().load_cached_plots()
+        plots = loader.load_cached_plots()
         keyword_lists = self.get_many_keyword_lists(plots)
 
         print("Keywords found:")        
@@ -265,25 +265,32 @@ class WordClusterer:
         return self.ClusteringMemo[p]
 
     def save(self):
-        Loader().save(self.Clusterings, "clusterings")
+        loader.save(self.Clusterings, "clusterings")
 
     def load(self):
-        self.Clusterings = Loader().load("clusterings")
+        self.Clusterings = loader.load("clusterings")
 
 class MovieEncoder:
     def __init__(self):
-        self.Clusterer: WordClusterer = Loader().load("clusterings")
+        self.Clusterer: WordClusterer = WordClusterer()
+        if loader.exists("clusterings"):
+            self.Clusterer.load()
+        else:
+            self.Clusterer.train_clusterings()
+            self.Clusterer.save()
+
         self.LanguageModel: Language = load("en_core_web_sm")
         self.WordClasses: list[str] = ["NOUN", "VERB", "ADJ", "ADV"]
+        self.ContextWindow: int = 10
 
-    def encode(self, plot_str: str, context_window: int, verbose: str = ''):
+    def encode(self, to_encode: str, verbose: str = ''):
         encoding = MovieEncoding()
 
-        tokenized_plot = self.LanguageModel(plot_str)
+        tokenized_plot = self.LanguageModel(to_encode)
         count = len(tokenized_plot)
 
         # adjust
-        context_window += 1
+        context_window = self.ContextWindow + 1
 
         # some helpers to check if a pair of words has already been assessed
         hash = lambda x, y: x * count + y if y < x else y * count + x
@@ -327,11 +334,19 @@ class MovieEncoder:
 
         return encoding
 
-    def digest(self, plots: dict[str, str], context_window: int):
+    def digest(self, context_window: int):
+        self.ContextWindow = context_window
+        plots = loader.load_cached_plots()
+
+        if loader.exists(f"digest-{context_window}"):
+            return loader.load(f"digest-{context_window}")
+
         encodings = {}
         for plot_id, plot_str in plots.items():
             print(f"Encoding movie with id {plot_id}")
             encodings[plot_id] = self.encode(plot_str, context_window)
+
+        loader.save(f"digest-{context_window}")
         return encodings
     
 class MovieComparison:
@@ -346,12 +361,12 @@ class MovieComparison:
         return sorted_ids[:top_n]
     
 class UserModel:
-    def __init__(self, similarity: EncodingSimilarity):
+    def __init__(self, movie_bank: dict[str, MovieEncoding], similarity: EncodingSimilarity):
         self.similarity: EncodingSimilarity = similarity
-        self.movie_bank: dict[str, MovieEncoding] = Loader().load("encoded_movie_bank")
+        self.movie_bank: dict[str, MovieEncoding] = movie_bank
         self.liked_encodings: dict[str, MovieEncoding] = {}
         self.disliked_encodings: dict[str, MovieEncoding] = {}
-        self.movie_titles: dict[str, str] = Loader().load_cached_titles()
+        self.movie_titles: dict[str, str] = loader.load_cached_titles()
 
     def search_for(self, movie_title: str):
         ids = list(self.movie_bank.keys())
@@ -375,7 +390,8 @@ class UserModel:
         self.disliked_encodings[movie_id] = self.movie_bank[movie_id]
 
     def recommend(self, how_many: int = 5):
-        scores = {id: self.likedness(self.movie_bank[id]) for id in self.movie_bank}
+        scores = {id: self.likedness(self.movie_bank[id]) for id in self.movie_bank if (id not in self.liked_encodings and id not in self.disliked_encodings)}
         ids = list(self.movie_bank.keys())
         sorted_ids = sorted(ids, key=lambda x: scores[x], reverse=True)
         return sorted_ids[:how_many]
+    
