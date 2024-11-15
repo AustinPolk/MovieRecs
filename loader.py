@@ -1,17 +1,14 @@
 import pickle
 import os
 
-def __init__(self):
-    pass
-
-def dopickle(self, filepath: str, thing):
+def dopickle(filepath: str, thing):
     try:
         with open(filepath, "wb+") as f:
             p = pickle.dump(thing, f)
     except:
         return
 
-def _unpickle(self, filepath: str):
+def _unpickle(filepath: str):
     p = None
     try:
         with open(filepath, "rb") as f:
@@ -20,21 +17,21 @@ def _unpickle(self, filepath: str):
         p = None
     return p
 
-def exists(self, file: str):
+def exists(file: str):
     return os.path.exists(f"cache\\{file}.bin")
 
-def load(self, from_file: str):
-    thing = self._unpickle(f"cache\\{from_file}.bin")
+def load(from_file: str):
+    thing = _unpickle(f"cache\\{from_file}.bin")
     return thing
 
-def save(self, thing, to_file: str):
-    self.dopickle(f"cache\\{to_file}.bin", thing)
+def save(thing, to_file: str):
+    dopickle(f"cache\\{to_file}.bin", thing)
     return
 
-def load_cached_plots(self):
-    plots_by_id = self._unpickle("cache\\plots_by_id.bin")
+def load_cached_plots():
+    plots_by_id = _unpickle("cache\\plots_by_id.bin")
     return plots_by_id
 
-def load_cached_titles(self):
-    movies_by_id = self._unpickle("cache\\movies_by_id.bin")
+def load_cached_titles():
+    movies_by_id = _unpickle("cache\\movies_by_id.bin")
     return movies_by_id

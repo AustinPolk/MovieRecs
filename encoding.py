@@ -344,7 +344,7 @@ class MovieEncoder:
         encodings = {}
         for plot_id, plot_str in plots.items():
             print(f"Encoding movie with id {plot_id}")
-            encodings[plot_id] = self.encode(plot_str, context_window)
+            encodings[plot_id] = self.encode(plot_str)
 
         loader.save(f"digest-{context_window}")
         return encodings
