@@ -342,11 +342,13 @@ class MovieEncoder:
             return loader.load(f"digest-{context_window}")
 
         encodings = {}
+        index = 1
         for plot_id, plot_str in plots.items():
-            print(f"Encoding movie with id {plot_id}")
+            print(f"{index} - Encoding movie with id {plot_id}")
+            index += 1
             encodings[plot_id] = self.encode(plot_str)
 
-        loader.save(f"digest-{context_window}")
+        loader.save(encodings, f"digest-{context_window}")
         return encodings
     
 class MovieComparison:
