@@ -50,6 +50,7 @@ class MovieEncoding:
         if word_cluster == -1 or other_cluster == -1:
             return
 
+        # TODO: maintain an order like noun before verb before adjective before adverb
         # apply a deliberate ordering to the pair
         pair = (word_cluster, other_cluster) if word_cluster < other_cluster else (other_cluster, word_cluster)
         
@@ -93,6 +94,7 @@ class EncodingSimilarity:
         self.Noun_Adjective_Weight = weights["NounAdjective"]
         self.Noun_Verb_Weight = weights["NounVerb"]
         self.Verb_Adverb_Weight = weights["VerbAdverb"]
+        self.alpha = weights["alpha"]
 
     def _verbose_similarity_score(self, encoding: MovieEncoding, other_encoding: MovieEncoding):
         nouns_inter = encoding.Nouns & other_encoding.Nouns
@@ -160,14 +162,16 @@ class EncodingSimilarity:
         if verbose:
             return self._verbose_similarity_score(encoding, other_encoding)
         
-        nouns_score = self.Nouns_Weight * len(encoding.Nouns & other_encoding.Nouns)
-        verbs_score = self.Verbs_Weight * len(encoding.Verbs & other_encoding.Verbs)
-        adjectives_score = self.Adjectives_Weight * len(encoding.Adjectives & other_encoding.Adjectives)
-        adverbs_score = self.Adverbs_Weight * len(encoding.Adverbs & other_encoding.Adverbs)
-        noun_noun_score = self.Noun_Noun_Weight * len(encoding.Noun_Noun & other_encoding.Noun_Noun)
-        noun_adjective_score = self.Noun_Adjective_Weight * len(encoding.Noun_Adjective & other_encoding.Noun_Adjective)
-        noun_verb_score = self.Noun_Verb_Weight * len(encoding.Noun_Verb & other_encoding.Noun_Verb)
-        verb_adverb_score = self.Verb_Adverb_Weight * len(encoding.Verb_Adverb & other_encoding.Verb_Adverb)
+        match_less_miss = lambda x, y: len(x & y) - len(max(x | y - x, x | y - y)) * self.alpha
+
+        nouns_score = self.Nouns_Weight * match_less_miss(encoding.Nouns, other_encoding.Nouns)
+        verbs_score = self.Verbs_Weight * match_less_miss(encoding.Verbs, other_encoding.Verbs)
+        adjectives_score = self.Adjectives_Weight * match_less_miss(encoding.Adjectives, other_encoding.Adjectives)
+        adverbs_score = self.Adverbs_Weight * match_less_miss(encoding.Adverbs, other_encoding.Adverbs)
+        noun_noun_score = self.Noun_Noun_Weight * match_less_miss(encoding.Noun_Noun, other_encoding.Noun_Noun)
+        noun_adjective_score = self.Noun_Adjective_Weight * match_less_miss(encoding.Noun_Adjective, other_encoding.Noun_Adjective)
+        noun_verb_score = self.Noun_Verb_Weight * match_less_miss(encoding.Noun_Verb, other_encoding.Noun_Verb)
+        verb_adverb_score = self.Verb_Adverb_Weight * match_less_miss(encoding.Verb_Adverb, other_encoding.Verb_Adverb)
 
         total_score = (nouns_score + 
                        verbs_score + 
@@ -372,7 +376,8 @@ class UserModel:
 
     def search_for(self, movie_title: str):
         ids = list(self.movie_bank.keys())
-        sorted_ids = sorted(ids, key = lambda x: fuzz.partial_ratio(movie_title, self.movie_titles[x]), reverse=True)
+        fz = lambda x, y: fuzz.QRatio(x.lower(), y.lower())
+        sorted_ids = sorted(ids, key = lambda x: fz(movie_title, self.movie_titles[x]), reverse=True)
         return sorted_ids
 
     def title_of(self, movie_id: str):
