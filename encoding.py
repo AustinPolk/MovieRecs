@@ -14,6 +14,7 @@ class WordClusterer:
         self.Clustering: KMeans = None
         self.ClusteringMemo: dict[(str, str), int] = {}
         self.ClusterDescriptions: dict[int, list[str]] = {}
+        self.ClusterCenters: dict[int, np.ndarray] = {}
 
     def get_single_keyword_set(self, plot_str: str):
         keywords = set()
@@ -47,8 +48,8 @@ class WordClusterer:
         all_vector_embeddings = []
         all_vector_keywords = []
         for word in keyword_list:
-            if word in self.Word2Vec:
-                all_vector_embeddings.append(self.Word2Vec[word])
+            if word.lower() in self.Word2Vec:
+                all_vector_embeddings.append(self.Word2Vec[word.lower()])
                 all_vector_keywords.append(word)
         all_vector_embeddings = np.array(all_vector_embeddings)
 
@@ -72,6 +73,10 @@ class WordClusterer:
         self.ClusterDescriptions = {}
         for cluster in words_by_cluster:
             this_center = cluster_centers[cluster]
+
+            # also record this center
+            self.ClusterCenters[cluster] = this_center
+
             these_words = words_by_cluster[cluster]
             sorted_words = sorted(these_words, key = lambda word: np.linalg.norm(this_center - self.Word2Vec[word], ord = 2))
             self.ClusterDescriptions[cluster] = sorted_words[:5]
@@ -84,13 +89,13 @@ class WordClusterer:
         return score
 
     def assign_cluster(self, word: str, pos: str):
-        if word not in self.Word2Vec:
+        if word.lower() not in self.Word2Vec:
             return -1
         if pos not in self.WordClasses:
             return -1
         
         if word not in self.ClusteringMemo:
-            wv = self.Word2Vec[word]
+            wv = self.Word2Vec[word.lower()]
             cluster = self.Clustering.predict(np.array([wv]))
             self.ClusteringMemo[word] = cluster[0]
         
@@ -106,20 +111,47 @@ class MovieEncoder2:
         self.Clusterer.train_clustering(encoding_size)
         self.LanguageModel: Language = load("en_core_web_sm")
 
+    def encode2(self, to_encode: str, normed: bool, l_normed: bool):
+        dimensions = self.Clusterer.ClusterCenters[0].shape[0]
+        encoding = np.zeros(dimensions)
+        tokenized = self.LanguageModel(to_encode)
+
+        count = 0
+        for token in tokenized:
+            t_cluster = self.Clusterer.assign_cluster(token.lemma_, token.pos_)
+            if t_cluster == -1:
+                continue
+            else:
+                count += 1
+            encoding += self.Clusterer.ClusterCenters[t_cluster]
+
+        if normed:
+            return encoding / np.linalg.norm(encoding)
+        if l_normed:
+            return encoding / count
+        return encoding
+
     def encode(self, to_encode: str, normed: bool):
         encoding = np.zeros(self.EncodingSize)
         tokenized = self.LanguageModel(to_encode)
 
+        count = 0
         for token in tokenized:
             t_cluster = self.Clusterer.assign_cluster(token.lemma_, token.pos_)
+            if t_cluster == -1:
+                continue
+            else:
+                count += 1
             encoding[t_cluster] += 1
 
-        return encoding / (np.linalg.norm(encoding) if normed else 1)
+        if normed:
+            return encoding / np.linalg.norm(encoding)
+        return encoding
 
-    def digest(self, normed: bool):
-        if normed and loader.exists(f"digest-n-{self.EncodingSize}"):
+    def digest(self, normed: bool, override: bool = False):
+        if not override and normed and loader.exists(f"digest-n-{self.EncodingSize}"):
             return loader.load(f"digest-n-{self.EncodingSize}")
-        if not normed and loader.exists(f"digest-{self.EncodingSize}"):
+        if not override and not normed and loader.exists(f"digest-{self.EncodingSize}"):
             return loader.load(f"digest-{self.EncodingSize}")
         
         encodings = {}
@@ -137,18 +169,48 @@ class MovieEncoder2:
         
         return encodings
     
+    def digest2(self, normed: str, override: bool = False):
+        if not override and normed and loader.exists(f"digest2-{normed}-{self.EncodingSize}"):
+            return loader.load(f"digest2-{normed}-{self.EncodingSize}")
+        if not override and not normed and loader.exists(f"digest2-{self.EncodingSize}"):
+            return loader.load(f"digest2-{self.EncodingSize}")
+        
+        encodings = {}
+        index = 1
+        for plot_id, plot_str in loader.load_cached_plots().items():
+            print(f"{index} - Encoding movie with id {plot_id}", sep="")
+            index += 1
+            encodings[plot_id] = self.encode2(plot_str, ('n' in normed), ('l' in normed))
+            print("... Done")
+
+        if normed:
+            loader.save(encodings, f"digest2-{normed}-{self.EncodingSize}")
+        if not normed:
+            loader.save(encodings, f"digest2-{self.EncodingSize}")
+        
+        return encodings
+    
 class MovieComparison:
     def __init__(self, movieBank: dict[str, np.ndarray]):
         self.MovieBank: dict[str, np.ndarray] = movieBank
 
     def cosine_similarity(self, A, B):
         return np.dot(A,B)/(np.linalg.norm(A)*np.linalg.norm(B))
+    
+    def euclidean_distance(self, A, B):
+        return np.linalg.norm(A - B, ord=2)
 
-    def closest(self, encoding: np.ndarray, top_n: int = 5):
-        scores: dict[str, float] = {id: self.cosine_similarity(encoding, self.MovieBank[id]) for id in self.MovieBank}
+    def closest(self, encoding: np.ndarray, method: str, top_n: int = 5):
+        
+        if method == 'cosine':
+            similarity = self.cosine_similarity
+        elif method == 'euclid':
+            similarity = self.euclidean_distance
+
+        scores: dict[str, float] = {id: similarity(encoding, self.MovieBank[id]) for id in self.MovieBank}
         ids = list(self.MovieBank.keys())
         sorted_ids = sorted(ids, key=lambda x: scores[x], reverse=True)
-        return sorted_ids[:top_n]
+        return [(x, scores[x]) for x in sorted_ids[:top_n]]
     
 # class UserModel:
 #     def __init__(self, movie_bank: dict[str, MovieEncoding], similarity: EncodingSimilarity):
