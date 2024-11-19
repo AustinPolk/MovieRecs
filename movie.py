@@ -26,18 +26,18 @@ class SparseVectorEncoding:
 
 class Movie:
     def __init__(self, from_str: str|None = None):
-        if not from_str:
-            self.Title: str = None                      # title of the movie
-            self.Plot: str = None                       # plot of the movie
-            self.Year: int = None                       # year that the movie was released
-            self.Director: str = None                   # director of the movie, if known (otherwise None)
-            self.Origin: str = None                     # "origin" of the movie (e.g. American, Tamil)
-            self.Cast: list[str] = None                 # list of cast members in the movie, if known (otherwise None)
-            self.Id: int = None                         # unique number to refer to this particular movie
-            self.Tokens: list[(str, str)] = []          # list of tokens in the movie plot, where each entry is the token text and part of speech
-            self.Entities: list[(str, str)] = []        # list of entities in the movie plot, where each entry is the entity text and entity label
-            self.Encoding: SparseVectorEncoding = None  # vector encoding for the movie, using a sparse data structure to reduce space
-        else:
+        self.Title: str = None                      # title of the movie
+        self.Plot: str = None                       # plot of the movie
+        self.Year: int = None                       # year that the movie was released
+        self.Director: str = None                   # director of the movie, if known (otherwise None)
+        self.Origin: str = None                     # "origin" of the movie (e.g. American, Tamil)
+        self.Cast: list[str] = None                 # list of cast members in the movie, if known (otherwise None)
+        self.Id: int = None                         # unique number to refer to this particular movie
+        self.Tokens: list[(str, str)] = []          # list of tokens in the movie plot, where each entry is the token text and part of speech
+        self.Entities: list[(str, str)] = []        # list of entities in the movie plot, where each entry is the entity text and entity label
+        self.Encoding: SparseVectorEncoding = None  # vector encoding for the movie, using a sparse data structure to reduce space
+        
+        if from_str:
             strip = lambda s: s.strip("\"\'\n\r ")
             none_if_null = lambda x: None if x == ".NULL" else x
             components = (none_if_null(x) for x in from_str.strip("|").split("|"))
@@ -46,10 +46,25 @@ class Movie:
             self.Year = int(components[2])
             self.Director = components[3]
             self.Origin = components[4]
-            self.Cast = [strip(x) for x in components[5].split(",")]
+            self.Cast = [strip(x) for x in components[5].split(",")] if components[5] else None
             self.Id = int(components[6])
-            self.
-    def Set(self, attr: str, value):
+
+            token_list = components[7].strip("[]").split(")")
+            for entry in token_list:
+                if entry.isspace():
+                    continue
+                text, pos = [strip(x) for x in entry.lstrip("(").split(",")]
+                self.Tokens.append((text, pos))
+            
+            entity_list = components[8].strip("[]").split(")")
+            for entry in entity_list:
+                if entry.isspace():
+                    continue
+                text, label = [strip(x) for x in entry.lstrip("(").split(",")]
+                self.Entities.append((text, label))
+
+            self.Encoding = SparseVectorEncoding(from_str=components[9])
+    def set(self, attr: str, value):
         # remove any quotes or whitespace from the beginning and end of the string
         strip = lambda s: s.strip("\"\'\n\r ")
         value = strip(value)
@@ -79,7 +94,6 @@ class Movie:
             self.Id = int(value)
         else:
             raise Exception()
-
     def __str__(self):
         null_if_none = lambda x: ".NULL" if not x else x
         s_rep = f"||{null_if_none(self.Title)}|{null_if_none(self.Plot)}|{null_if_none(self.Year)}|{null_if_none(self.Director)}|{null_if_none(self.Origin)}|{null_if_none(self.Cast)}|{null_if_none(self.Id)}|{null_if_none(self.Tokens)}|{null_if_none(self.Entities)}|{null_if_none(self.Encoding)}||"
