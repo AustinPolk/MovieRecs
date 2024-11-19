@@ -40,31 +40,29 @@ class Movie:
         if from_str:
             strip = lambda s: s.strip("\"\'\n\r ")
             none_if_null = lambda x: None if x == ".NULL" else x
-            components = (none_if_null(x) for x in from_str.strip("|").split("|"))
+            components = [none_if_null(x) for x in from_str.strip("|").split("|")]
             self.Title = components[0]
             self.Plot = components[1]
-            self.Year = int(components[2])
+            self.Year = int(components[2]) if components[2] else components[2]
             self.Director = components[3]
             self.Origin = components[4]
-            self.Cast = [strip(x) for x in components[5].split(",")] if components[5] else None
-            self.Id = int(components[6])
+            self.Cast = [strip(x) for x in components[5].strip("[]").split(",")] if components[5] else components[5]
+            self.Id = int(components[6]) if components[6] else components[6]
 
-            token_list = components[7].strip("[]").split(")")
-            for entry in token_list:
-                if entry.isspace():
-                    continue
-                text, pos = [strip(x) for x in entry.lstrip("(").split(",")]
-                self.Tokens.append((text, pos))
+            if components[7]:
+                token_list = components[7].split(",")
+                for entry in token_list:
+                    text, pos = [strip(x) for x in entry.split(":")]
+                    self.Tokens.append((text, pos))
             
-            entity_list = components[8].strip("[]").split(")")
-            for entry in entity_list:
-                if entry.isspace():
-                    continue
-                text, label = [strip(x) for x in entry.lstrip("(").split(",")]
-                self.Entities.append((text, label))
+            if components[8]:
+                entity_list = components[8].split(",")
+                for entry in entity_list:
+                    text, label = [strip(x) for x in entry.split(":")]
+                    self.Entities.append((text, label))
 
-            self.Encoding = SparseVectorEncoding(from_str=components[9])
-    def set(self, attr: str, value):
+            self.Encoding = SparseVectorEncoding(from_str=components[9]) if components[9] else components[9]
+    def set(self, attr: str, value: str):
         # remove any quotes or whitespace from the beginning and end of the string
         strip = lambda s: s.strip("\"\'\n\r ")
         value = strip(value)
@@ -95,9 +93,36 @@ class Movie:
         else:
             raise Exception()
     def __str__(self):
-        null_if_none = lambda x: ".NULL" if not x else x
-        s_rep = f"||{null_if_none(self.Title)}|{null_if_none(self.Plot)}|{null_if_none(self.Year)}|{null_if_none(self.Director)}|{null_if_none(self.Origin)}|{null_if_none(self.Cast)}|{null_if_none(self.Id)}|{null_if_none(self.Tokens)}|{null_if_none(self.Entities)}|{null_if_none(self.Encoding)}||"
+        token_list_str = ""
+        for token, pos in self.Tokens:
+            token_list_str += f"{token}:{pos},"
+        token_list_str = token_list_str[:-1]
+
+        ent_list_str = ""
+        for entity, label in self.Entities:
+            ent_list_str += f"{entity}:{label},"
+        ent_list_str = ent_list_str[:-1]
+
+        null_if_none = lambda x: ".NULL" if not x or str(x).isspace() else x
+        s_rep = f"||{null_if_none(self.Title)}|{null_if_none(self.Plot)}|{null_if_none(self.Year)}|{null_if_none(self.Director)}|{null_if_none(self.Origin)}|{null_if_none(self.Cast)}|{null_if_none(self.Id)}|{null_if_none(token_list_str)}|{null_if_none(ent_list_str)}|{null_if_none(self.Encoding)}||"
         return s_rep
+    
+    def describe(self, short: bool):
+        desc = f"{self.Title} ({self.Year})"
+        if short:
+            return desc    
+        if self.Director:
+            desc = f"{desc}, directed by {self.Director}"
+        if self.Cast:
+            desc = f"{desc}, starring "
+            if len(self.Cast) == 1:
+                desc += self.Cast[0]
+            else:
+                for name in self.Cast[:-1]:
+                    desc += f"{name}, "
+                desc += f"and {self.Cast[-1]}"
+        return desc
+
 
 class MovieBank:
     def __init__(self):
@@ -130,18 +155,19 @@ class MovieBank:
 
             try:
                 movie = Movie()
-                movie.Year = int(row['Release Year'])
-                movie.Title = str(row['Title'])
-                movie.Plot = str(row['Plot'])
-                cast = str(row['Cast'])
-                movie.Cast = [member.strip() for member in cast.split(",")]
+                movie.set("Title", row['Title'])
+                movie.set("Plot", row['Plot'])
+                movie.set("Year", str(row['Release Year']))
+                movie.set("Director", row['Director'])
+                movie.set("Origin", row['Origin/Ethnicity'])
+                movie.set("Cast", row['Cast'])
                 movie.Id = index
 
                 tokenized = language(movie.Plot)
                 for token in tokenized:
                     movie.Tokens.append((token.lemma_, token.pos_))
                 for ent in tokenized.ents:
-                    movie.Entities.append(ent.text)
+                    movie.Entities.append((ent.text, ent.label_))
 
                 print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
 
