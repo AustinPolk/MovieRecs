@@ -36,7 +36,8 @@ class Movie:
         self.Tokens: list[(str, str)] = []          # list of tokens in the movie plot, where each entry is the token text and part of speech
         self.Entities: list[(str, str)] = []        # list of entities in the movie plot, where each entry is the entity text and entity label
         self.Encoding: SparseVectorEncoding = None  # vector encoding for the movie, using a sparse data structure to reduce space
-        
+        self.Genre: str = None                      # genre attributed to the movie, if known (otherwise None)
+
         if from_str:
             strip = lambda s: s.strip("\"\'\n\r ")
             none_if_null = lambda x: None if x == ".NULL" else x
@@ -62,6 +63,7 @@ class Movie:
                     self.Entities.append((text, label))
 
             self.Encoding = SparseVectorEncoding(from_str=components[9]) if components[9] else components[9]
+            self.Genre = components[10]
     def set(self, attr: str, value: str):
         # remove any quotes or whitespace from the beginning and end of the string
         strip = lambda s: s.strip("\"\'\n\r ")
@@ -88,6 +90,8 @@ class Movie:
             if not value:
                 self.Cast = value
             self.Cast = [strip(member) for member in value.split(",")]
+        elif attr == 'Genre':
+            self.Genre = value
         elif attr == 'Id':
             self.Id = int(value)
         else:
@@ -104,13 +108,15 @@ class Movie:
         ent_list_str = ent_list_str[:-1]
 
         null_if_none = lambda x: ".NULL" if not x or str(x).isspace() else x
-        s_rep = f"||{null_if_none(self.Title)}|{null_if_none(self.Plot)}|{null_if_none(self.Year)}|{null_if_none(self.Director)}|{null_if_none(self.Origin)}|{null_if_none(self.Cast)}|{null_if_none(self.Id)}|{null_if_none(token_list_str)}|{null_if_none(ent_list_str)}|{null_if_none(self.Encoding)}||"
+        s_rep = f"||{null_if_none(self.Title)}|{null_if_none(self.Plot)}|{null_if_none(self.Year)}|{null_if_none(self.Director)}|{null_if_none(self.Origin)}|{null_if_none(self.Cast)}|{null_if_none(self.Id)}|{null_if_none(token_list_str)}|{null_if_none(ent_list_str)}|{null_if_none(self.Encoding)}|{null_if_none(self.Genre)}||"
         return s_rep
     
     def describe(self, short: bool):
         desc = f"{self.Title} ({self.Year})"
         if short:
-            return desc    
+            return desc
+        if self.Genre:
+            desc = f"{desc[:-1]}, {self.Genre})"
         if self.Director:
             desc = f"{desc}, directed by {self.Director}"
         if self.Cast:
@@ -122,7 +128,6 @@ class Movie:
                     desc += f"{name}, "
                 desc += f"and {self.Cast[-1]}"
         return desc
-
 
 class MovieBank:
     def __init__(self):
@@ -153,6 +158,7 @@ class MovieBank:
                     movie.set("Director", row['Director'])
                     movie.set("Origin", row['Origin/Ethnicity'])
                     movie.set("Cast", row['Cast'])
+                    movie.set("Genre", row['Genre'])
                     movie.Id = index
 
                     tokenized = language(movie.Plot)
