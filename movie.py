@@ -1,5 +1,6 @@
-import pandas as pd
+import csv
 import spacy
+import os
 
 class SparseVectorEncoding:
     def __init__(self, from_str: str|None = None):
@@ -93,7 +94,8 @@ class Movie:
         elif attr == 'Cast':
             if not value:
                 self.Cast = value
-            self.Cast = [strip(member) for member in value.split(",")]
+            else:
+                self.Cast = [strip(member) for member in value.split(",")]
         elif attr == 'Genre':
             self.Genre = value
         elif attr == 'Id':
@@ -138,45 +140,48 @@ class MovieLoader:
 
     def load_movies(self, csv_filepath: str, start_index: int = 0):
         language = spacy.load("en_core_web_lg")
-        movie_frame = pd.read_csv(csv_filepath, chunksize=100)
+        #movie_frame = pd.read_csv(csv_filepath)
         all_tokens = []
         all_vectors = {}
 
         index = 0
-        with open("cache\\unvectorized.txt", "+a", encoding="utf-8") as f:
-            for _, row in movie_frame.iterrows():
-                if index < start_index:
+        with open("cache\\unvectorized.txt", "w+", encoding="utf-8") as f:
+            with open(csv_filepath, encoding="utf-8") as csv_file:
+                csvReader = csv.DictReader(csv_file)
+                for row in csvReader:
+                    print(row)
+                    if index < start_index:
+                        index += 1
+                        continue
+
+                    try:
+                        movie = Movie()
+                        movie.set("Title", row['Title'])
+                        movie.set("Plot", row['Plot'])
+                        movie.set("Year", str(row['Release Year']))
+                        movie.set("Director", row['Director'])
+                        movie.set("Origin", row['Origin/Ethnicity'])
+                        movie.set("Cast", row['Cast'])
+                        movie.set("Genre", row['Genre'])
+                        movie.Id = index
+
+                        tokenized = language(movie.Plot)
+                        for token in tokenized:
+                            if token.pos_ == "PUNCT": # skip punctuation, especially commas
+                                continue
+                            if token.has_vector:
+                                all_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
+                            movie.Tokens.append((token.lemma_, token.pos_))
+                        all_tokens.extend(movie.Tokens)
+                        for ent in tokenized.ents:
+                            movie.Entities.append((ent.text, ent.label_))
+
+                        print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
+                    except:
+                        continue
                     index += 1
-                    continue
 
-                try:
-                    movie = Movie()
-                    movie.set("Title", row['Title'])
-                    movie.set("Plot", row['Plot'])
-                    movie.set("Year", str(row['Release Year']))
-                    movie.set("Director", row['Director'])
-                    movie.set("Origin", row['Origin/Ethnicity'])
-                    movie.set("Cast", row['Cast'])
-                    movie.set("Genre", row['Genre'])
-                    movie.Id = index
-
-                    tokenized = language(movie.Plot)
-                    for token in tokenized:
-                        if token.pos_ == "PUNCT": # skip punctuation, especially commas
-                            continue
-                        if token.has_vector:
-                            all_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
-                        movie.Tokens.append((token.lemma_, token.pos_))
-                    all_tokens.extend(movie.Tokens)
-                    for ent in tokenized.ents:
-                        movie.Entities.append((ent.text, ent.label_))
-
-                    print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
-                except:
-                    continue
-                index += 1
-
-                f.write(str(movie))
+                    f.write(str(movie))
 
         # save all the vectors and tokens
         import pickle
