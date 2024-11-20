@@ -1,7 +1,5 @@
-import numpy as np
 import pandas as pd
 import spacy
-import loader
 
 class SparseVectorEncoding:
     def __init__(self, from_str: str|None = None):
@@ -23,6 +21,12 @@ class SparseVectorEncoding:
         for idx, val in self.Values.items():
             s_rep += f'{idx}:{val},'
         return s_rep[:-1] # remove trailing comma
+    def normalize(self):
+        self.Norm = sum(A * A for A in self.Values.values()) ** 0.5
+        for idx in self.Values:
+            self.Values[idx] /= self.Norm
+    def normed_cosine_similarity(self, other):
+        return sum(A * B for A, B in zip(self.Values.values(), other.Values.values()))
 
 class Movie:
     def __init__(self, from_str: str|None = None):
@@ -109,8 +113,7 @@ class Movie:
 
         null_if_none = lambda x: ".NULL" if not x or str(x).isspace() else x
         s_rep = f"||{null_if_none(self.Title)}|{null_if_none(self.Plot)}|{null_if_none(self.Year)}|{null_if_none(self.Director)}|{null_if_none(self.Origin)}|{null_if_none(self.Cast)}|{null_if_none(self.Id)}|{null_if_none(token_list_str)}|{null_if_none(ent_list_str)}|{null_if_none(self.Encoding)}|{null_if_none(self.Genre)}||"
-        return s_rep
-    
+        return s_rep  
     def describe(self, short: bool):
         desc = f"{self.Title} ({self.Year})"
         if short:
@@ -129,22 +132,18 @@ class Movie:
                 desc += f"and {self.Cast[-1]}"
         return desc
 
-class MovieBank:
+class MovieLoader:
     def __init__(self):
-        self.Movies: dict[int, Movie] = {}
+        pass
 
-    def __getitem__(self, index: int):
-        return self.Movies[index]
-    
-    def __setitem__(self, index: int, value: Movie):
-        self.Movies[index] = value
-
-    def load_movies_from_csv(self, csv_filepath: str, start_index: int = 0):
+    def load_movies(self, csv_filepath: str, start_index: int = 0):
         language = spacy.load("en_core_web_lg")
-        movie_frame = pd.read_csv(csv_filepath)
+        movie_frame = pd.read_csv(csv_filepath, chunksize=100)
+        all_tokens = []
+        all_vectors = {}
 
         index = 0
-        with open("cache\\loaded_movies.txt", "+a") as f:
+        with open("cache\\unvectorized.txt", "+a", encoding="utf-8") as f:
             for _, row in movie_frame.iterrows():
                 if index < start_index:
                     index += 1
@@ -163,25 +162,25 @@ class MovieBank:
 
                     tokenized = language(movie.Plot)
                     for token in tokenized:
+                        if token.pos_ == "PUNCT": # skip punctuation, especially commas
+                            continue
+                        if token.has_vector:
+                            all_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
                         movie.Tokens.append((token.lemma_, token.pos_))
+                    all_tokens.extend(movie.Tokens)
                     for ent in tokenized.ents:
                         movie.Entities.append((ent.text, ent.label_))
 
                     print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
-
-                    self[index] = movie
                 except:
                     continue
                 index += 1
 
                 f.write(str(movie))
 
-    def save(self):
-        loader.save(self.Movies, "movie_bank")
-
-    def load(self):
-        if loader.exists("movie_bank"):
-            self.Movies = loader.load("movie_bank")
-            return True
-        else:
-            return False
+        # save all the vectors and tokens
+        import pickle
+        with open("cache\\movie_tokens.bin", "wb+") as f:
+            pickle.dump(all_tokens, f)
+        with open("cache\\vector_embeddings.bin", "wb+") as f:
+            pickle.dump(all_vectors, f)
