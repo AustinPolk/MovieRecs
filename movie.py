@@ -1,6 +1,5 @@
 import csv
-import spacy
-import os
+#import spacy
 
 class SparseVectorEncoding:
     def __init__(self, from_str: str|None = None):
@@ -139,7 +138,7 @@ class MovieLoader:
         pass
 
     def load_movies(self, csv_filepath: str, start_index: int = 0):
-        language = spacy.load("en_core_web_lg")
+        #language = spacy.load("en_core_web_lg")
         #movie_frame = pd.read_csv(csv_filepath)
         all_tokens = []
         all_vectors = {}
@@ -165,18 +164,18 @@ class MovieLoader:
                         movie.set("Genre", row['Genre'])
                         movie.Id = index
 
-                        tokenized = language(movie.Plot)
-                        for token in tokenized:
-                            if token.pos_ == "PUNCT": # skip punctuation, especially commas
-                                continue
-                            if token.has_vector:
-                                all_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
-                            movie.Tokens.append((token.lemma_, token.pos_))
-                        all_tokens.extend(movie.Tokens)
-                        for ent in tokenized.ents:
-                            movie.Entities.append((ent.text, ent.label_))
+                        # tokenized = language(movie.Plot)
+                        # for token in tokenized:
+                        #     if token.pos_ not in ["NOUN", "VERB", "ADV", "ADJ"]: # skip all but desired classes
+                        #         continue
+                        #     if token.has_vector:
+                        #         all_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
+                        #     movie.Tokens.append((token.lemma_, token.pos_))
+                        # all_tokens.extend(movie.Tokens)
+                        # for ent in tokenized.ents:
+                        #     movie.Entities.append((ent.text, ent.label_))
 
-                        print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
+                        #print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
                     except:
                         continue
                     index += 1
