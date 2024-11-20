@@ -134,53 +134,41 @@ class MovieBank:
     def __setitem__(self, index: int, value: Movie):
         self.Movies[index] = value
 
-    def load_movies_from_csv(self, csv_filepath: str, pickup: bool = True):
+    def load_movies_from_csv(self, csv_filepath: str, start_index: int = 0):
         language = spacy.load("en_core_web_lg")
         movie_frame = pd.read_csv(csv_filepath)
 
-        if pickup:
-            loaded = self.load()
-            if loaded:
-                start = max(id for id in self.Movies)
-            else:
-                start = 0
-        else:
-            start = 0
-
         index = 0
-        for _, row in movie_frame.iterrows():
-            if index < start:
+        with open("cache\\loaded_movies.txt", "+a") as f:
+            for _, row in movie_frame.iterrows():
+                if index < start_index:
+                    index += 1
+                    continue
+
+                try:
+                    movie = Movie()
+                    movie.set("Title", row['Title'])
+                    movie.set("Plot", row['Plot'])
+                    movie.set("Year", str(row['Release Year']))
+                    movie.set("Director", row['Director'])
+                    movie.set("Origin", row['Origin/Ethnicity'])
+                    movie.set("Cast", row['Cast'])
+                    movie.Id = index
+
+                    tokenized = language(movie.Plot)
+                    for token in tokenized:
+                        movie.Tokens.append((token.lemma_, token.pos_))
+                    for ent in tokenized.ents:
+                        movie.Entities.append((ent.text, ent.label_))
+
+                    print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
+
+                    self[index] = movie
+                except:
+                    continue
                 index += 1
-                continue
 
-            try:
-                movie = Movie()
-                movie.set("Title", row['Title'])
-                movie.set("Plot", row['Plot'])
-                movie.set("Year", str(row['Release Year']))
-                movie.set("Director", row['Director'])
-                movie.set("Origin", row['Origin/Ethnicity'])
-                movie.set("Cast", row['Cast'])
-                movie.Id = index
-
-                tokenized = language(movie.Plot)
-                for token in tokenized:
-                    movie.Tokens.append((token.lemma_, token.pos_))
-                for ent in tokenized.ents:
-                    movie.Entities.append((ent.text, ent.label_))
-
-                print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
-
-                self[index] = movie
-            except:
-                continue
-            index += 1
-
-            # save progress every 200 rows
-            if index % 200 == 0:
-                self.save()
-
-        self.save()
+                f.write(str(movie))
 
     def save(self):
         loader.save(self.Movies, "movie_bank")
