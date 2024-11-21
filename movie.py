@@ -5,6 +5,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import numpy as np
 from fuzzywuzzy import fuzz
+import time
 
 class SparseVectorEncoding:
     def __init__(self):
@@ -231,6 +232,8 @@ class MovieServiceSetup:
                 
                 print(movie.Id, movie.describe(False), f"({len(tokenized_plot.Tokens)}, {len(tokenized_plot.Entities)})")
                 tokenized_plots.append((movie.Id, tokenized_plot))
+
+                time.sleep(0.1) # give the tokenizer some time to not shit itself
             except:
                 continue
 
