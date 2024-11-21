@@ -45,6 +45,10 @@ class MovieEncoding:
     def __init__(self):
         self.PlotEncoding: SparseVectorEncoding = SparseVectorEncoding()
         self.EntityEncodings: list[EntityEncoding] = []
+    def add_entity(self, entity_encoding: EntityEncoding):
+        max_similarity = max(entity_encoding.similarity(x) for x in self.EntityEncodings)
+        if max_similarity < 0.95:    # don't add if it is too similar, it is likely a repeat
+            self.EntityEncodings.append(entity_encoding)
     def estimate_entity_matches(self, other):
         these_entities = list(self.EntityEncodings)
         those_entities = list(other.EntityEncodings)
@@ -70,7 +74,6 @@ class MovieEncoding:
         ent_sim_score = self.estimate_entity_matches(other) / max_matches
         plot_sim_score = self.PlotEncoding.normed_cosine_similarity(other.PlotEncoding)
         return 0.65 * plot_sim_score + 0.35 * ent_sim_score     # give the plot score a higher weight, but still let the entity score have some say
-
 
 class MovieInfo:
     def __init__(self):
@@ -141,7 +144,6 @@ class TokenizedPlot:
 class TokenAccepter:
     def __init__(self):
         pass
-
     def accept(self, token):
         if token.pos_ not in ["NOUN", "VERB", "ADJ", "ADV"]:    # only accept words in an open class
             return False
@@ -152,7 +154,6 @@ class TokenAccepter:
 class EntityAccepter:
     def __init__(self):
         pass
-
     def accept(self, entity):
         if entity.label_ in ["TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"]:    # do not accept these entity types, they aren't very useful
             return False
@@ -254,7 +255,8 @@ class MovieServiceSetup:
         best_score = -1
         all_scores = {}
 
-        for n_clusters in range(min_clusters, max_clusters, step=cluster_step):
+        # do max clusters + 1 so that max_clusters will get tested and not skipped
+        for n_clusters in range(min_clusters, max_clusters + 1, step=cluster_step):
             cluster_model = KMeans(n_clusters=n_clusters, random_state=26)
             cluster_model.fit(word_vectors)
             score = silhouette_score(word_vectors, cluster_model.labels_)
@@ -275,4 +277,55 @@ class MovieServiceSetup:
     # source is a binary file containing tokenized plots
     # cluster_source is a binary file containing a clustering model
     # sink is a binary file containing the final encodings
-    def encode_all_movie_plots(self, source: str, cluster_source:str, sink: str)
+    def encode_all_movies(self, source: str, vector_source: str, cluster_source: str, sink: str):
+        source_frame = pd.read_pickle(source)
+
+        with open(vector_source, "rb") as vector_file:
+            word_vectors = pickle.load(vector_file)
+        
+        with open(cluster_source, "rb") as cluster_file:
+            cluster_model = pickle.load(cluster_file)
+
+        all_encodings = []
+        for row in source_frame.iterrows():
+            try:
+                id = row['Id']
+                tokenized_plot = row['TokenizedPlot']
+
+                movie_encoding = MovieEncoding()
+
+                for token, pos in tokenized_plot.Tokens:
+                    word_vector = word_vectors[(token, pos)]
+                    dim = cluster_model.predict(np.array([word_vector]))
+                    movie_encoding.PlotEncoding[dim] += 1
+                movie_encoding.PlotEncoding.normalize()
+
+                for entity, label in tokenized_plot.Entities:
+                    ent_encoding = EntityEncoding(entity, label)
+                    movie_encoding.add_entity(ent_encoding)
+
+                print(f"Encoded id={id}")
+
+                all_encodings.append((id, movie_encoding))
+            except:
+                continue
+        
+        sink_frame = pd.DataFrame(all_encodings, columns=['Id', 'MovieEncoding'])
+        sink_frame.to_pickle(sink)
+
+    def setup(self):
+        import os
+
+        data_folder = "data"
+        movie_data_csv = os.path.join(data_folder, "wiki_movie_info.csv")
+        movie_info_bin = os.path.join(data_folder, "movie_info.bin")
+        tokenized_plots_bin = os.path.join(data_folder, "tokenized_plots.bin")
+        word_vectors_bin = os.path.join(data_folder, "word_vectors.bin")
+        cluster_model_bin = os.path.join(data_folder, "cluster_model.bin")
+        cluster_scores_bin = os.path.join(data_folder, "cluster_scores.bin")
+        movie_encodings_bin = os.path.join(data_folder, "movie_encodings.bin")
+
+        self.load_all_movie_info(source=movie_data_csv, sink=movie_info_bin)
+        self.tokenize_all_plots_plus_vectors(source=movie_info_bin, sink=tokenized_plots_bin, vector_sink=word_vectors_bin)
+        self.train_cluster_model_on_vectors(source=word_vectors_bin, sink=cluster_model_bin, score_sink=cluster_scores_bin, min_clusters=7000, max_clusters=15000, cluster_step=500)
+        self.encode_all_movies(source=tokenized_plots_bin, vector_source=word_vectors_bin, cluster_source=cluster_model_bin, sink=movie_encodings_bin)
