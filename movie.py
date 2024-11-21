@@ -204,8 +204,13 @@ class MovieServiceSetup:
 
         tok_accepter = TokenAccepter()
         ent_accepter = EntityAccepter()
-        for _, row in source_frame.iterrows():
+        for idx, row in source_frame.iterrows():
             try:
+                if idx % 2000 == 0:
+                    print("Reloading language model")
+                    language = spacy.load("en_core_web_lg") # after every 2000 iterations, reload language
+                    time.sleep(5)                           # give it some time
+
                 movie = row['Movie']
                 plot = movie.Plot
                 tokenized_plot = TokenizedPlot()
@@ -235,8 +240,6 @@ class MovieServiceSetup:
                 
                 print(movie.Id, movie.describe(False), f"({len(tokenized_plot.Tokens)}, {len(tokenized_plot.Entities)})")
                 tokenized_plots.append((movie.Id, tokenized_plot))
-
-                time.sleep(0.1) # give the tokenizer some time to not shit itself
             except:
                 continue
 
