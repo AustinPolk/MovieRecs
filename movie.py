@@ -35,8 +35,8 @@ class SparseVectorEncoding:
 # for now just relies on string similarity, in the future could be name vectors
 class EntityEncoding:
     def __init__(self, entity: str, label: str):
-        self.EntityName: str = entity
-        self.EntityLabel: str = label
+        self.EntityName: str = entity.lower()
+        self.EntityLabel: str = label.lower()
     def similarity(self, other):
         if self.EntityLabel != other.EntityLabel:
             return 0
