@@ -87,6 +87,10 @@ class MovieInfo:
         self.Id: int = None                         # unique number to refer to this particular movie
         self.Genre: str = None                      # genre attributed to the movie, if known (otherwise None)
     def set(self, attr: str, value: str):
+        # replace an actual missing value with empty string
+        if pd.isna(value):
+            value = ""
+
         # remove any quotes or whitespace from the beginning and end of the string
         strip = lambda s: s.strip("\"\'\n\r ")
         value = strip(value)
@@ -167,10 +171,10 @@ class MovieServiceSetup:
     # source is the csv file containing movie info, 
     # sink is a binary file containing formatted movie info
     def load_all_movie_info(self, source: str, sink: str):
-        index = 0
+        #index = 0
         source_frame = pd.read_csv(source)
         movie_infos = []
-        for row in source_frame.iterrows():
+        for idx, row in source_frame.iterrows():
             try:
                 movie = MovieInfo()
                 movie.set("Title", row['Title'])
@@ -180,13 +184,12 @@ class MovieServiceSetup:
                 movie.set("Origin", row['Origin/Ethnicity'])
                 movie.set("Cast", row['Cast'])
                 movie.set("Genre", row['Genre'])
-                movie.Id = index
+                movie.Id = idx
 
                 movie_infos.append((movie.Id, movie))
                 print(movie.Id, movie.describe(False))
             except:
                 continue
-            index += 1
         sink_frame = pd.DataFrame(movie_infos, columns=['Id', 'Movie'])
         sink_frame.to_pickle(sink)
 
@@ -201,7 +204,7 @@ class MovieServiceSetup:
 
         tok_accepter = TokenAccepter()
         ent_accepter = EntityAccepter()
-        for row in source_frame.iterrows():
+        for _, row in source_frame.iterrows():
             try:
                 movie = row['Movie']
                 plot = movie.Plot
@@ -259,7 +262,7 @@ class MovieServiceSetup:
         all_scores = {}
 
         # do max clusters + 1 so that max_clusters will get tested and not skipped
-        for n_clusters in range(min_clusters, max_clusters + 1, step=cluster_step):
+        for n_clusters in range(min_clusters, max_clusters + 1, cluster_step):
             cluster_model = KMeans(n_clusters=n_clusters, random_state=26)
             cluster_model.fit(word_vectors)
             score = silhouette_score(word_vectors, cluster_model.labels_)
@@ -290,7 +293,8 @@ class MovieServiceSetup:
             cluster_model = pickle.load(cluster_file)
 
         all_encodings = []
-        for row in source_frame.iterrows():
+        clustering_memo = {}
+        for _, row in source_frame.iterrows():
             try:
                 id = row['Id']
                 tokenized_plot = row['TokenizedPlot']
@@ -298,8 +302,13 @@ class MovieServiceSetup:
                 movie_encoding = MovieEncoding()
 
                 for token, pos in tokenized_plot.Tokens:
-                    word_vector = word_vectors[(token, pos)]
-                    dim = cluster_model.predict(np.array([word_vector]))
+                    # to speed up computation, memoize clustering results
+                    if (token, pos) not in clustering_memo:
+                        word_vector = word_vectors[(token, pos)]
+                        dim = cluster_model.predict(np.array([word_vector]))
+                        clustering_memo[(token, pos)] = dim
+                    else:
+                        dim = clustering_memo[(token, pos)]
                     movie_encoding.PlotEncoding[dim] += 1
                 movie_encoding.PlotEncoding.normalize()
 
