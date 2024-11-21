@@ -2,33 +2,75 @@ import pickle
 import pandas as pd
 import spacy
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+import numpy as np
+from fuzzywuzzy import fuzz
 
 class SparseVectorEncoding:
-    def __init__(self, from_str: str|None = None):
-        self.Values: dict[int, float] = {}  # actual values in the vector, indexed by dimension
-        self.Norm: float = None             # magnitude of the vector, used in normalization/cosine similarity
-        
-        if from_str:
-            for entry in from_str.split(','):
-                idx, val = entry.split(':')
-                self.Values[int(idx)] = float(val)
+    def __init__(self):
+        self.Dimensions: dict[int, float] = {}  # actual values in the vector, indexed by dimension
+        self.Norm: float = None                 # magnitude of the vector, used in normalization/cosine similarity
     def __getitem__(self, index: int):
-        if index not in self.Values:    # any value not recorded is assumed 0 in the vector
+        if index not in self.Dimensions:    # any value not recorded is assumed 0 in the vector
             return 0
-        return self.Values[index]
+        return self.Dimensions[index]
     def __setitem__(self, index: int, value: float):
-        self.Values[index] = value
-    def __str__(self):
-        s_rep = ''
-        for idx, val in self.Values.items():
-            s_rep += f'{idx}:{val},'
-        return s_rep[:-1] # remove trailing comma
+        self.Dimensions[index] = value
     def normalize(self):
-        self.Norm = sum(A * A for A in self.Values.values()) ** 0.5
-        for idx in self.Values:
-            self.Values[idx] /= self.Norm
+        self.Norm = sum(A * A for A in self.Dimensions.values()) ** 0.5
+        for dim in self.Dimensions:
+            self[dim] /= self.Norm
     def normed_cosine_similarity(self, other):
-        return sum(A * B for A, B in zip(self.Values.values(), other.Values.values()))
+        if not self.Norm:
+            self.normalize()
+        if not other.Norm:
+            other.normalize()
+        common_dims = set(self.Dimensions.keys()) & set(other.Dimensions.keys())
+        similarity = 0
+        for dim in common_dims:
+            similarity += self[dim] * other[dim]
+        return similarity
+
+# for now just relies on string similarity, in the future could be name vectors
+class EntityEncoding:
+    def __init__(self, entity: str, label: str):
+        self.EntityName: str = entity
+        self.EntityLabel: str = label
+    def similarity(self, other):
+        if self.EntityLabel != other.EntityLabel:
+            return 0
+        return fuzz.ratio(self.EntityName, other.EntityName) / 100
+
+class MovieEncoding:
+    def __init__(self):
+        self.PlotEncoding: SparseVectorEncoding = SparseVectorEncoding()
+        self.EntityEncodings: list[EntityEncoding] = []
+    def estimate_entity_matches(self, other):
+        these_entities = list(self.EntityEncodings)
+        those_entities = list(other.EntityEncodings)
+        matches = 0
+
+        # attempt to make a 1 to 1 matching from these entities to those entities
+        while these_entities and those_entities:
+            ent = these_entities.pop()
+            best_match = None
+            best_similarity = 0
+            for other_ent in those_entities:
+                similarity = ent.similarity(other_ent)
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = other_ent
+            if best_similarity > 0.85:  # threshold for what counts as a match
+                matches += 1
+                those_entities.remove(best_match)
+        
+        return matches
+    def similarity(self, other):
+        max_matches = min(len(self.EntityEncodings), len(other.EntityEncodings)) + 1    # +1 just to make the resultant similarity a little smaller
+        ent_sim_score = self.estimate_entity_matches(other) / max_matches
+        plot_sim_score = self.PlotEncoding.normed_cosine_similarity(other.PlotEncoding)
+        return 0.65 * plot_sim_score + 0.35 * ent_sim_score     # give the plot score a higher weight, but still let the entity score have some say
+
 
 class MovieInfo:
     def __init__(self):
@@ -168,7 +210,7 @@ class MovieServiceSetup:
                     if not tok_accepter.accept(token):
                         continue
                     if (token.lemma_, token.pos_) not in word_vectors:
-                        word_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
+                        word_vectors[(token.lemma_, token.pos_)] = token.vector
                     tokenized_plot.Tokens.append((token.lemma_, token.pos_))
                 for entity in tokenized.ents:
                     if not ent_accepter.accept(entity):
@@ -186,16 +228,51 @@ class MovieServiceSetup:
                 if movie.Origin:
                     tokenized_plot.Entities.append((movie.Origin, "ORIGIN"))
                 
+                print(movie.Id, movie.describe(False), f"({len(tokenized_plot.Tokens)}, {len(tokenized_plot.Entities)})")
                 tokenized_plots.append((movie.Id, tokenized_plot))
             except:
                 continue
+
+        just_vectors = list(word_vectors.values())
+        just_vectors = np.array(just_vectors)
         with open(vector_sink, "wb+") as vector_file:
-            pickle.dump(word_vectors, vector_file)
+            pickle.dump(just_vectors, vector_file)
 
         sink_frame = pd.DataFrame(tokenized_plots, columns=['Id', 'TokenizedPlot'])
         sink_frame.to_pickle(sink)
 
-    # vector_source is a binary file containing word vector embeddings, 
-    # sink is a binary file containing a clustering model
-    def train_cluster_model_on_vectors(self, vector_source: str, sink: str, n_clusters: int):
-        pass
+    # source is a binary file containing word vector embeddings, 
+    # sink is a binary file containing a clustering model,
+    # score_sink is a binary file containing scores for different cluster sizes
+    def train_cluster_model_on_vectors(self, source: str, sink: str, score_sink:str, min_clusters: int, max_clusters: int, cluster_step: int = 500):
+        with open(source, "rb") as vector_file:
+            word_vectors = pickle.load(vector_file)
+
+        print(f"Performing clustering on {len(word_vectors)} word vectors")
+        
+        best_cluster_model = None
+        best_score = -1
+        all_scores = {}
+
+        for n_clusters in range(min_clusters, max_clusters, step=cluster_step):
+            cluster_model = KMeans(n_clusters=n_clusters, random_state=26)
+            cluster_model.fit(word_vectors)
+            score = silhouette_score(word_vectors, cluster_model.labels_)
+            print(f"Silhouette score for {n_clusters} clusters: {score}")
+
+            if score > best_score:
+                best_score = score
+                best_cluster_model = cluster_model
+
+            all_scores[n_clusters] = score
+
+        with open(sink, "wb+") as cluster_file:
+            pickle.dump(best_cluster_model, cluster_file)
+        
+        with open(score_sink, "wb+") as score_file:
+            pickle.dump(all_scores, score_file)
+
+    # source is a binary file containing tokenized plots
+    # cluster_source is a binary file containing a clustering model
+    # sink is a binary file containing the final encodings
+    def encode_all_movie_plots(self, source: str, cluster_source:str, sink: str)
