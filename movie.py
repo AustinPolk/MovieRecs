@@ -1,5 +1,7 @@
-import csv
-#import spacy
+import pickle
+import pandas as pd
+import spacy
+from sklearn.cluster import KMeans
 
 class SparseVectorEncoding:
     def __init__(self, from_str: str|None = None):
@@ -28,8 +30,8 @@ class SparseVectorEncoding:
     def normed_cosine_similarity(self, other):
         return sum(A * B for A, B in zip(self.Values.values(), other.Values.values()))
 
-class Movie:
-    def __init__(self, from_str: str|None = None):
+class MovieInfo:
+    def __init__(self):
         self.Title: str = None                      # title of the movie
         self.Plot: str = None                       # plot of the movie
         self.Year: int = None                       # year that the movie was released
@@ -37,37 +39,7 @@ class Movie:
         self.Origin: str = None                     # "origin" of the movie (e.g. American, Tamil)
         self.Cast: list[str] = None                 # list of cast members in the movie, if known (otherwise None)
         self.Id: int = None                         # unique number to refer to this particular movie
-        self.Tokens: list[(str, str)] = []          # list of tokens in the movie plot, where each entry is the token text and part of speech
-        self.Entities: list[(str, str)] = []        # list of entities in the movie plot, where each entry is the entity text and entity label
-        self.Encoding: SparseVectorEncoding = None  # vector encoding for the movie, using a sparse data structure to reduce space
         self.Genre: str = None                      # genre attributed to the movie, if known (otherwise None)
-
-        if from_str:
-            strip = lambda s: s.strip("\"\'\n\r ")
-            none_if_null = lambda x: None if x == ".NULL" else x
-            components = [none_if_null(x) for x in from_str.strip("|").split("|")]
-            self.Title = components[0]
-            self.Plot = components[1]
-            self.Year = int(components[2]) if components[2] else components[2]
-            self.Director = components[3]
-            self.Origin = components[4]
-            self.Cast = [strip(x) for x in components[5].strip("[]").split(",")] if components[5] else components[5]
-            self.Id = int(components[6]) if components[6] else components[6]
-
-            if components[7]:
-                token_list = components[7].split(",")
-                for entry in token_list:
-                    text, pos = [strip(x) for x in entry.split(":")]
-                    self.Tokens.append((text, pos))
-            
-            if components[8]:
-                entity_list = components[8].split(",")
-                for entry in entity_list:
-                    text, label = [strip(x) for x in entry.split(":")]
-                    self.Entities.append((text, label))
-
-            self.Encoding = SparseVectorEncoding(from_str=components[9]) if components[9] else components[9]
-            self.Genre = components[10]
     def set(self, attr: str, value: str):
         # remove any quotes or whitespace from the beginning and end of the string
         strip = lambda s: s.strip("\"\'\n\r ")
@@ -100,21 +72,7 @@ class Movie:
         elif attr == 'Id':
             self.Id = int(value)
         else:
-            raise Exception()
-    def __str__(self):
-        token_list_str = ""
-        for token, pos in self.Tokens:
-            token_list_str += f"{token}:{pos},"
-        token_list_str = token_list_str[:-1]
-
-        ent_list_str = ""
-        for entity, label in self.Entities:
-            ent_list_str += f"{entity}:{label},"
-        ent_list_str = ent_list_str[:-1]
-
-        null_if_none = lambda x: ".NULL" if not x or str(x).isspace() else x
-        s_rep = f"||{null_if_none(self.Title)}|{null_if_none(self.Plot)}|{null_if_none(self.Year)}|{null_if_none(self.Director)}|{null_if_none(self.Origin)}|{null_if_none(self.Cast)}|{null_if_none(self.Id)}|{null_if_none(token_list_str)}|{null_if_none(ent_list_str)}|{null_if_none(self.Encoding)}|{null_if_none(self.Genre)}||"
-        return s_rep  
+            raise Exception() 
     def describe(self, short: bool):
         desc = f"{self.Title} ({self.Year})"
         if short:
@@ -133,58 +91,111 @@ class Movie:
                 desc += f"and {self.Cast[-1]}"
         return desc
 
-class MovieLoader:
+class TokenizedPlot:
+    def __init__(self):
+        self.Tokens: list[(str, str)] = []
+        self.Entities: list[(str, str)] = []
+
+class TokenAccepter:
     def __init__(self):
         pass
 
-    def load_movies(self, csv_filepath: str, start_index: int = 0):
-        #language = spacy.load("en_core_web_lg")
-        #movie_frame = pd.read_csv(csv_filepath)
-        all_tokens = []
-        all_vectors = {}
+    def accept(self, token):
+        if token.pos_ not in ["NOUN", "VERB", "ADJ", "ADV"]:    # only accept words in an open class
+            return False
+        if not token.has_vector:    # only accept words with available vector embeddings
+            return False
+        return True
+    
+class EntityAccepter:
+    def __init__(self):
+        pass
 
+    def accept(self, entity):
+        if entity.label_ in ["TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"]:    # do not accept these entity types, they aren't very useful
+            return False
+        return True
+
+class MovieServiceSetup:
+    def __init__(self):
+        pass
+
+    # source is the csv file containing movie info, 
+    # sink is a binary file containing formatted movie info
+    def load_all_movie_info(self, source: str, sink: str):
         index = 0
-        with open("cache\\unvectorized.txt", "w+", encoding="utf-8") as f:
-            with open(csv_filepath, encoding="utf-8") as csv_file:
-                csvReader = csv.DictReader(csv_file)
-                for row in csvReader:
-                    print(row)
-                    if index < start_index:
-                        index += 1
+        source_frame = pd.read_csv(source)
+        movie_infos = []
+        for row in source_frame.iterrows():
+            try:
+                movie = MovieInfo()
+                movie.set("Title", row['Title'])
+                movie.set("Plot", row['Plot'])
+                movie.set("Year", str(row['Release Year']))
+                movie.set("Director", row['Director'])
+                movie.set("Origin", row['Origin/Ethnicity'])
+                movie.set("Cast", row['Cast'])
+                movie.set("Genre", row['Genre'])
+                movie.Id = index
+
+                movie_infos.append((movie.Id, movie))
+                print(movie.Id, movie.describe(False))
+            except:
+                continue
+            index += 1
+        sink_frame = pd.DataFrame(movie_infos, columns=['Id', 'Movie'])
+        sink_frame.to_pickle(sink)
+
+    # source is a binary file containing formatted movie info, 
+    # sink is a binary file containing tokenized plots, 
+    # vector_sink is a binary file of word vector embeddings
+    def tokenize_all_plots_plus_vectors(self, source: str, sink: str, vector_sink: str):
+        language = spacy.load("en_core_web_lg")
+        source_frame = pd.read_pickle(source)
+        tokenized_plots = []
+        word_vectors = {}
+
+        tok_accepter = TokenAccepter()
+        ent_accepter = EntityAccepter()
+        for row in source_frame.iterrows():
+            try:
+                movie = row['Movie']
+                plot = movie.Plot
+                tokenized_plot = TokenizedPlot()
+
+                tokenized = language(plot)
+                for token in tokenized:
+                    if not tok_accepter.accept(token):
                         continue
-
-                    try:
-                        movie = Movie()
-                        movie.set("Title", row['Title'])
-                        movie.set("Plot", row['Plot'])
-                        movie.set("Year", str(row['Release Year']))
-                        movie.set("Director", row['Director'])
-                        movie.set("Origin", row['Origin/Ethnicity'])
-                        movie.set("Cast", row['Cast'])
-                        movie.set("Genre", row['Genre'])
-                        movie.Id = index
-
-                        # tokenized = language(movie.Plot)
-                        # for token in tokenized:
-                        #     if token.pos_ not in ["NOUN", "VERB", "ADV", "ADJ"]: # skip all but desired classes
-                        #         continue
-                        #     if token.has_vector:
-                        #         all_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
-                        #     movie.Tokens.append((token.lemma_, token.pos_))
-                        # all_tokens.extend(movie.Tokens)
-                        # for ent in tokenized.ents:
-                        #     movie.Entities.append((ent.text, ent.label_))
-
-                        #print(f"{movie.Id}. {movie.Title} ({movie.Year}) - {movie.Plot[:20]}... ({len(movie.Tokens)} tokens, {len(movie.Entities)} entities)")
-                    except:
+                    if (token.lemma_, token.pos_) not in word_vectors:
+                        word_vectors[(token.lemma_, token.pos_)] = (token.vector, token.vector_norm)
+                    tokenized_plot.Tokens.append((token.lemma_, token.pos_))
+                for entity in tokenized.ents:
+                    if not ent_accepter.accept(entity):
                         continue
-                    index += 1
+                    tokenized_plot.Entities.append((entity.text, entity.label_))
+                
+                # add special entities pertaining to the movie's production
+                if movie.Director:
+                    tokenized_plot.Entities.append((movie.Director, "DIRECTOR"))
+                if movie.Cast:
+                    for member in movie.Cast:
+                        tokenized_plot.Entities.append((member, "CAST"))
+                if movie.Genre:
+                    tokenized_plot.Entities.append((movie.Genre, "GENRE"))
+                if movie.Origin:
+                    tokenized_plot.Entities.append((movie.Origin, "ORIGIN"))
+                
+                tokenized_plots.append((movie.Id, tokenized_plot))
+            except:
+                continue
+        with open(vector_sink, "wb+") as vector_file:
+            pickle.dump(word_vectors, vector_file)
 
-                    f.write(str(movie))
+        sink_frame = pd.DataFrame(tokenized_plots, columns=['Id', 'TokenizedPlot'])
+        sink_frame.to_pickle(sink)
 
-        # save all the vectors and tokens
-        import pickle
-        with open("cache\\movie_tokens.bin", "wb+") as f:
-            pickle.dump(all_tokens, f)
-        with open("cache\\vector_embeddings.bin", "wb+") as f:
-            pickle.dump(all_vectors, f)
+    # vector_source is a binary file containing word vector embeddings, 
+    # sink is a binary file containing a clustering model
+    def train_cluster_model_on_vectors(self, vector_source: str, sink: str, n_clusters: int):
+        pass
