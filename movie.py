@@ -174,6 +174,7 @@ class MovieServiceSetup:
     def load_all_movie_info(self, source: str, sink: str):
         # this step has already been completed
         if os.path.exists(sink):
+            print("Movies already loaded")
             return
 
         source_frame = pd.read_csv(source)
@@ -203,6 +204,7 @@ class MovieServiceSetup:
     def tokenize_all_plots_plus_vectors(self, source: str, sink: str, vector_sink: str, start_idx: int, end_idx: int):
         # this step has already been completed
         if os.path.exists(sink) and os.path.exists(vector_sink):
+            print(f"Plots {start_idx} to {end_idx} alraedy tokenized")
             return
 
         language = spacy.load("en_core_web_lg")
@@ -266,13 +268,17 @@ class MovieServiceSetup:
     # vector_sink is the combined file containing all word vector embeddings
     def combine_tokenized_results(self, sources: list[str], vector_sources: list[str], sink: str, vector_sink: str):
         if not os.path.exists(sink):
+            print("Combining tokenized plots")
             all_tokenized = pd.read_pickle(sources[0])
             for source in source[1:]:
                 this_tokenized = pd.read_pickle(source)
                 all_tokenized = pd.concat([all_tokenized, this_tokenized], ignore_index=True)
             all_tokenized.to_pickle(sink)
-        
+        else:
+            print("Tokenized plots already combined")
+
         if not os.path.exists(vector_sink):
+            print("Combining all known word vectors")
             all_vectors = {}
             for vector_source in vector_sources:
                 with open(vector_source, "rb") as vector_file:
@@ -280,11 +286,17 @@ class MovieServiceSetup:
                     all_vectors.update(these_vectors)
             with open(vector_sink, "wb+") as vector_file:
                 pickle.dump(all_vectors, vector_file)
+        else:
+            print("Word vectors already combined")
 
     # source is a binary file containing word vector embeddings, 
     # sink is a binary file containing a clustering model,
     # score_sink is a binary file containing scores for different cluster sizes
     def train_cluster_model_on_vectors(self, source: str, sink: str, score_sink:str, min_clusters: int, max_clusters: int, cluster_step: int = 500):
+        if os.path.exists(sink) and os.path.exists(score_sink):
+            print("Clustering model already chosen")
+            return
+        
         with open(source, "rb") as vector_file:
             word_vectors = pickle.load(vector_file)
 
@@ -307,6 +319,8 @@ class MovieServiceSetup:
 
             all_scores[n_clusters] = score
 
+        print(f"{len(best_cluster_model.cluster_centers_)} clusters achieved the highest silhouette score ({best_score})")
+
         with open(sink, "wb+") as cluster_file:
             pickle.dump(best_cluster_model, cluster_file)
         
@@ -317,6 +331,10 @@ class MovieServiceSetup:
     # cluster_source is a binary file containing a clustering model
     # sink is a binary file containing the final encodings
     def encode_all_movies(self, source: str, vector_source: str, cluster_source: str, sink: str):
+        if os.path.exists(sink):
+            print("All movies already encoded")
+            return
+        
         source_frame = pd.read_pickle(source)
 
         with open(vector_source, "rb") as vector_file:
@@ -324,6 +342,8 @@ class MovieServiceSetup:
         
         with open(cluster_source, "rb") as cluster_file:
             cluster_model = pickle.load(cluster_file)
+
+        print("Encoding all movies")
 
         all_encodings = []
         clustering_memo = {}
