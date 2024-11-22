@@ -5,7 +5,6 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import numpy as np
 from fuzzywuzzy import fuzz
-import time
 import os
 
 class SparseVectorEncoding:
@@ -86,7 +85,7 @@ class MovieInfo:
         self.Origin: str = None                     # "origin" of the movie (e.g. American, Tamil)
         self.Cast: list[str] = None                 # list of cast members in the movie, if known (otherwise None)
         self.Id: int = None                         # unique number to refer to this particular movie
-        self.Genre: str = None                      # genre attributed to the movie, if known (otherwise None)
+        self.Genre: list[str] = None                # genres attributed to the movie, if known (otherwise None)
     def set(self, attr: str, value: str):
         # replace an actual missing value with empty string
         if pd.isna(value):
@@ -117,9 +116,22 @@ class MovieInfo:
             if not value:
                 self.Cast = value
             else:
-                self.Cast = [strip(member) for member in value.split(",")]
+                self.Cast = [strip(member) for member in value.split(',')]
         elif attr == 'Genre':
-            self.Genre = value
+            if not value:
+                self.Genre = value
+            self.Genre = []
+            # split the genre into a list of genres
+            list_elements = [strip(genre) for genre in value.split(',')]
+            # try to get as granular of data as possible on the genre
+            for element in list_elements:
+                self.Genre.append(element)
+                # separate genres like "romantic comedy" into "romantic" and "comedy"
+                for sub_element in element.split():
+                    self.Genre.append(sub_element)
+                    # separate genres like "drama/thriller" into "drama" and "thriller"
+                    for sub_sub_element in sub_element.split('-/'):
+                        self.Genre.append(sub_sub_element)
         elif attr == 'Id':
             self.Id = int(value)
         else:
@@ -128,8 +140,8 @@ class MovieInfo:
         desc = f"{self.Title} ({self.Year})"
         if short:
             return desc
-        if self.Genre:
-            desc = f"{desc[:-1]}, {self.Genre})"
+        if self.Origin:
+            desc = f"{desc[:-1]}, {self.Origin})"
         if self.Director:
             desc = f"{desc}, directed by {self.Director}"
         if self.Cast:
@@ -145,6 +157,7 @@ class MovieInfo:
 class TokenizedPlot:
     def __init__(self):
         self.Tokens: list[(str, str)] = []
+        self.Vectors: dict[(str, str), np.ndarray] = {}
         self.Entities: list[(str, str)] = []
 
 class TokenAccepter:
@@ -167,7 +180,7 @@ class EntityAccepter:
 
 class MovieServiceSetup:
     def __init__(self):
-        pass
+        self.setup()
 
     # source is the csv file containing movie info, 
     # sink is a binary file containing formatted movie info
@@ -204,7 +217,7 @@ class MovieServiceSetup:
     def tokenize_all_plots_plus_vectors(self, source: str, sink: str, vector_sink: str, start_idx: int, end_idx: int):
         # this step has already been completed
         if os.path.exists(sink) and os.path.exists(vector_sink):
-            print(f"Plots {start_idx} to {end_idx} alraedy tokenized")
+            print(f"Plots {start_idx} to {end_idx-1} alraedy tokenized")
             return
 
         language = spacy.load("en_core_web_lg")
@@ -232,6 +245,7 @@ class MovieServiceSetup:
                         continue
                     if (token.lemma_, token.pos_) not in word_vectors:
                         word_vectors[(token.lemma_, token.pos_)] = token.vector
+                        tokenized_plot.Vectors[(token.lemma_, token.pos_)] = token.vector
                     tokenized_plot.Tokens.append((token.lemma_, token.pos_))
                 for entity in tokenized.ents:
                     if not ent_accepter.accept(entity):
@@ -245,7 +259,8 @@ class MovieServiceSetup:
                     for member in movie.Cast:
                         tokenized_plot.Entities.append((member, "CAST"))
                 if movie.Genre:
-                    tokenized_plot.Entities.append((movie.Genre, "GENRE"))
+                    for genre in movie.Genre:
+                        tokenized_plot.Entities.append((genre, "GENRE"))
                 if movie.Origin:
                     tokenized_plot.Entities.append((movie.Origin, "ORIGIN"))
                 
@@ -255,7 +270,6 @@ class MovieServiceSetup:
                 continue
 
         just_vectors = list(word_vectors.values())
-        just_vectors = np.array(just_vectors)
         with open(vector_sink, "wb+") as vector_file:
             pickle.dump(just_vectors, vector_file)
 
@@ -270,7 +284,7 @@ class MovieServiceSetup:
         if not os.path.exists(sink):
             print("Combining tokenized plots")
             all_tokenized = pd.read_pickle(sources[0])
-            for source in source[1:]:
+            for source in sources[1:]:
                 this_tokenized = pd.read_pickle(source)
                 all_tokenized = pd.concat([all_tokenized, this_tokenized], ignore_index=True)
             all_tokenized.to_pickle(sink)
@@ -279,11 +293,13 @@ class MovieServiceSetup:
 
         if not os.path.exists(vector_sink):
             print("Combining all known word vectors")
-            all_vectors = {}
+            all_vectors = []
             for vector_source in vector_sources:
                 with open(vector_source, "rb") as vector_file:
                     these_vectors = pickle.load(vector_file)
-                    all_vectors.update(these_vectors)
+                    all_vectors.extend(these_vectors)
+            all_vectors = list(set(all_vectors))
+            all_vectors = np.array(all_vectors)
             with open(vector_sink, "wb+") as vector_file:
                 pickle.dump(all_vectors, vector_file)
         else:
@@ -337,9 +353,6 @@ class MovieServiceSetup:
         
         source_frame = pd.read_pickle(source)
 
-        with open(vector_source, "rb") as vector_file:
-            word_vectors = pickle.load(vector_file)
-        
         with open(cluster_source, "rb") as cluster_file:
             cluster_model = pickle.load(cluster_file)
 
@@ -357,7 +370,7 @@ class MovieServiceSetup:
                 for token, pos in tokenized_plot.Tokens:
                     # to speed up computation, memoize clustering results
                     if (token, pos) not in clustering_memo:
-                        word_vector = word_vectors[(token, pos)]
+                        word_vector = tokenized_plot.Vectors[(token, pos)]
                         dim = cluster_model.predict(np.array([word_vector]))
                         clustering_memo[(token, pos)] = dim
                     else:
@@ -394,11 +407,18 @@ class MovieServiceSetup:
         
         tokenized_sinks = []
         vector_sinks = []
-        for start, end in zip(range(0, 35000+1, 1000), range(1000, 36000+1, 1000)):
-            this_tokenized_sink = os.path.join(data_folder, f"tokenized_plots_{start}_{end}.bin")
-            this_vector_sink = os.path.join(data_folder, f"word_vectors_{start}_{end}.bin")
+        rough_count = 34500
+        step = 500
+        for start, end in zip(range(0, rough_count+1, step), range(step, rough_count+step+1, step)):
+            this_tokenized_sink = os.path.join(data_folder, f"tokenized_plots_{start}_{end-1}.bin")
+            this_vector_sink = os.path.join(data_folder, f"word_vectors_{start}_{end-1}.bin")
+            tokenized_sinks.append(this_tokenized_sink)
+            vector_sinks.append(this_vector_sink)
             self.tokenize_all_plots_plus_vectors(source=movie_info_bin, sink=this_tokenized_sink, vector_sink=this_vector_sink, start_idx=start, end_idx=end)
         self.combine_tokenized_results(sources=tokenized_sinks, vector_sources=vector_sinks, sink=tokenized_plots_bin, vector_sink=word_vectors_bin)
 
         self.train_cluster_model_on_vectors(source=word_vectors_bin, sink=cluster_model_bin, score_sink=cluster_scores_bin, min_clusters=7000, max_clusters=15000, cluster_step=500)
         self.encode_all_movies(source=tokenized_plots_bin, vector_source=word_vectors_bin, cluster_source=cluster_model_bin, sink=movie_encodings_bin)
+
+if __name__ == '__main__':
+    setup = MovieServiceSetup()
