@@ -81,11 +81,13 @@ class MovieInfo:
         self.Title: str = None                      # title of the movie
         self.Plot: str = None                       # plot of the movie
         self.Year: int = None                       # year that the movie was released
-        self.Director: str = None                   # director of the movie, if known (otherwise None)
+        self.Director: list[str] = None             # director of the movie, if known (otherwise None)
         self.Origin: str = None                     # "origin" of the movie (e.g. American, Tamil)
         self.Cast: list[str] = None                 # list of cast members in the movie, if known (otherwise None)
         self.Id: int = None                         # unique number to refer to this particular movie
         self.Genre: list[str] = None                # genres attributed to the movie, if known (otherwise None)
+    def split_implicit_list(self, list_str: str):
+
     def set(self, attr: str, value: str):
         # replace an actual missing value with empty string
         if pd.isna(value):
@@ -109,7 +111,11 @@ class MovieInfo:
         elif attr == 'Year':
             self.Year = int(value)
         elif attr == 'Director':
-            self.Director = value
+            if not value:
+                self.Director = value
+            
+            # remove quotes from nicknames
+            list_elements = [strip(director).replace('\'', '').replace('\"', '') for director in value.split(',')]
         elif attr == 'Origin':
             self.Origin = value
         elif attr == 'Cast':
