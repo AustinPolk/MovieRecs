@@ -6,6 +6,7 @@ from sklearn.metrics import silhouette_score
 import numpy as np
 from fuzzywuzzy import fuzz
 import time
+import os
 
 class SparseVectorEncoding:
     def __init__(self):
@@ -171,7 +172,10 @@ class MovieServiceSetup:
     # source is the csv file containing movie info, 
     # sink is a binary file containing formatted movie info
     def load_all_movie_info(self, source: str, sink: str):
-        #index = 0
+        # this step has already been completed
+        if os.path.exists(sink):
+            return
+
         source_frame = pd.read_csv(source)
         movie_infos = []
         for idx, row in source_frame.iterrows():
@@ -196,7 +200,11 @@ class MovieServiceSetup:
     # source is a binary file containing formatted movie info, 
     # sink is a binary file containing tokenized plots, 
     # vector_sink is a binary file of word vector embeddings
-    def tokenize_all_plots_plus_vectors(self, source: str, sink: str, vector_sink: str):
+    def tokenize_all_plots_plus_vectors(self, source: str, sink: str, vector_sink: str, start_idx: int, end_idx: int):
+        # this step has already been completed
+        if os.path.exists(sink) and os.path.exists(vector_sink):
+            return
+
         language = spacy.load("en_core_web_lg")
         source_frame = pd.read_pickle(source)
         tokenized_plots = []
@@ -205,12 +213,13 @@ class MovieServiceSetup:
         tok_accepter = TokenAccepter()
         ent_accepter = EntityAccepter()
         for idx, row in source_frame.iterrows():
+            # note that if end_idx < start_idx, it will go from start_idx all the way through (this is intended)
+            if idx < start_idx:
+                continue
+            elif idx == end_idx:
+                break
+            
             try:
-                if idx % 2000 == 0:
-                    print("Reloading language model")
-                    language = spacy.load("en_core_web_lg") # after every 2000 iterations, reload language
-                    time.sleep(5)                           # give it some time
-
                 movie = row['Movie']
                 plot = movie.Plot
                 tokenized_plot = TokenizedPlot()
@@ -250,6 +259,27 @@ class MovieServiceSetup:
 
         sink_frame = pd.DataFrame(tokenized_plots, columns=['Id', 'TokenizedPlot'])
         sink_frame.to_pickle(sink)
+
+    # sources is a list of binary files containing tokenized plots
+    # vector sources is a list of binary files containing word vector embeddings
+    # sink is the combined file containing all tokenized plots
+    # vector_sink is the combined file containing all word vector embeddings
+    def combine_tokenized_results(self, sources: list[str], vector_sources: list[str], sink: str, vector_sink: str):
+        if not os.path.exists(sink):
+            all_tokenized = pd.read_pickle(sources[0])
+            for source in source[1:]:
+                this_tokenized = pd.read_pickle(source)
+                all_tokenized = pd.concat([all_tokenized, this_tokenized], ignore_index=True)
+            all_tokenized.to_pickle(sink)
+        
+        if not os.path.exists(vector_sink):
+            all_vectors = {}
+            for vector_source in vector_sources:
+                with open(vector_source, "rb") as vector_file:
+                    these_vectors = pickle.load(vector_file)
+                    all_vectors.update(these_vectors)
+            with open(vector_sink, "wb+") as vector_file:
+                pickle.dump(all_vectors, vector_file)
 
     # source is a binary file containing word vector embeddings, 
     # sink is a binary file containing a clustering model,
@@ -341,6 +371,14 @@ class MovieServiceSetup:
         movie_encodings_bin = os.path.join(data_folder, "movie_encodings.bin")
 
         self.load_all_movie_info(source=movie_data_csv, sink=movie_info_bin)
-        self.tokenize_all_plots_plus_vectors(source=movie_info_bin, sink=tokenized_plots_bin, vector_sink=word_vectors_bin)
+        
+        tokenized_sinks = []
+        vector_sinks = []
+        for start, end in zip(range(0, 35000+1, 1000), range(1000, 36000+1, 1000)):
+            this_tokenized_sink = os.path.join(data_folder, f"tokenized_plots_{start}_{end}.bin")
+            this_vector_sink = os.path.join(data_folder, f"word_vectors_{start}_{end}.bin")
+            self.tokenize_all_plots_plus_vectors(source=movie_info_bin, sink=this_tokenized_sink, vector_sink=this_vector_sink, start_idx=start, end_idx=end)
+        self.combine_tokenized_results(sources=tokenized_sinks, vector_sources=vector_sinks, sink=tokenized_plots_bin, vector_sink=word_vectors_bin)
+
         self.train_cluster_model_on_vectors(source=word_vectors_bin, sink=cluster_model_bin, score_sink=cluster_scores_bin, min_clusters=7000, max_clusters=15000, cluster_step=500)
         self.encode_all_movies(source=tokenized_plots_bin, vector_source=word_vectors_bin, cluster_source=cluster_model_bin, sink=movie_encodings_bin)
