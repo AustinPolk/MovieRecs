@@ -111,22 +111,24 @@ class MovieInfo:
         elif attr == 'Director':
             if not value:
                 self.Director = value
-            self.Director = []
-            # remove quotes from nicknames
-            dequote = lambda x: x.replace('\'', '').replace('\"', '')
-            list_elements = [dequote(strip(director)) for director in value.split(',')]
-            for element in list_elements:
-                # if this element looks like "and John Smith", make it "John Smith"
-                no_and = element[4:] if element.startswith('and ') else element
-                # split a list separated by an 'and' instead of a','
-                for sub_element in element.split(' and '):
-                    self.Director.append(sub_element)
+            else:
+                self.Director = []
+                # remove quotes from nicknames
+                dequote = lambda x: x.replace('\'', '').replace('\"', '')
+                list_elements = [dequote(strip(director)) for director in value.split(',')]
+                for element in list_elements:
+                    # if this element looks like "and John Smith", make it "John Smith"
+                    no_and = element[4:] if element.startswith('and ') else element
+                    # split a list separated by an 'and' instead of a','
+                    for sub_element in element.split(' and '):
+                        self.Director.append(sub_element)
         elif attr == 'Origin':
             self.Origin = value
         elif attr == 'Cast':
             if not value:
                 self.Cast = value
             else:
+                self.Cast = []
                 list_elements = [strip(member) for member in value.split(',')]
                 for element in list_elements:
                     # handle the case when cast members are separated by newlines
@@ -135,18 +137,19 @@ class MovieInfo:
         elif attr == 'Genre':
             if not value:
                 self.Genre = value
-            self.Genre = []
-            # split the genre into a list of genres
-            list_elements = [strip(genre) for genre in value.split(',')]
-            # try to get as granular of data as possible on the genre
-            for element in list_elements:
-                self.Genre.append(element)
-                # separate genres like "romantic comedy" into "romantic" and "comedy"
-                for sub_element in element.split():
-                    self.Genre.append(sub_element)
-                    # separate genres like "drama/thriller" into "drama" and "thriller"
-                    for sub_sub_element in sub_element.split('-/'):
-                        self.Genre.append(sub_sub_element)
+            else:
+                self.Genre = []
+                # split the genre into a list of genres
+                list_elements = [strip(genre) for genre in value.split(',')]
+                # try to get as granular of data as possible on the genre
+                for element in list_elements:
+                    self.Genre.append(element)
+                    # separate genres like "romantic comedy" into "romantic" and "comedy"
+                    for sub_element in element.split():
+                        self.Genre.append(sub_element)
+                        # separate genres like "drama/thriller" into "drama" and "thriller"
+                        for sub_sub_element in sub_element.split('-/'):
+                            self.Genre.append(sub_sub_element)
         elif attr == 'Id':
             self.Id = int(value)
         else:
@@ -227,7 +230,8 @@ class MovieServiceSetup:
 
                 movie_infos.append((movie.Id, movie))
                 print(movie.Id, movie.describe(False))
-            except:
+            except Exception as e:
+                print('Fuck, ', e)
                 continue
         sink_frame = pd.DataFrame(movie_infos, columns=['Id', 'Movie'])
         sink_frame.to_pickle(sink)
