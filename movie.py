@@ -315,7 +315,6 @@ class MovieServiceSetup:
                 with open(vector_source, "rb") as vector_file:
                     these_vectors = pickle.load(vector_file)
                     all_vectors.extend(these_vectors)
-            all_vectors = list(set(all_vectors))
             all_vectors = np.array(all_vectors)
             with open(vector_sink, "wb+") as vector_file:
                 pickle.dump(all_vectors, vector_file)
