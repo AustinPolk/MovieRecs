@@ -86,8 +86,6 @@ class MovieInfo:
         self.Cast: list[str] = None                 # list of cast members in the movie, if known (otherwise None)
         self.Id: int = None                         # unique number to refer to this particular movie
         self.Genre: list[str] = None                # genres attributed to the movie, if known (otherwise None)
-    def split_implicit_list(self, list_str: str):
-
     def set(self, attr: str, value: str):
         # replace an actual missing value with empty string
         if pd.isna(value):
@@ -113,9 +111,16 @@ class MovieInfo:
         elif attr == 'Director':
             if not value:
                 self.Director = value
-            
+            self.Director = []
             # remove quotes from nicknames
-            list_elements = [strip(director).replace('\'', '').replace('\"', '') for director in value.split(',')]
+            dequote = lambda x: x.replace('\'', '').replace('\"', '')
+            list_elements = [dequote(strip(director)) for director in value.split(',')]
+            for element in list_elements:
+                # if this element looks like "and John Smith", make it "John Smith"
+                no_and = element[4:] if element.startswith('and ') else element
+                # split a list separated by an 'and' instead of a','
+                for sub_element in element.split(' and '):
+                    self.Director.append(sub_element)
         elif attr == 'Origin':
             self.Origin = value
         elif attr == 'Cast':
@@ -149,7 +154,13 @@ class MovieInfo:
         if self.Origin:
             desc = f"{desc[:-1]}, {self.Origin})"
         if self.Director:
-            desc = f"{desc}, directed by {self.Director}"
+            desc = f"{desc}, directed by "
+            if len(self.Director) == 1:
+                desc += self.Director[0]
+            else:
+                for name in self.Director[:-1]:
+                    desc += f"{name}, "
+                desc += f"and {self.Director[-1]}"
         if self.Cast:
             desc = f"{desc}, starring "
             if len(self.Cast) == 1:
