@@ -240,7 +240,6 @@ class MovieServiceSetup:
         language = spacy.load("en_core_web_lg")
         source_frame = pd.read_pickle(source)
         tokenized_plots = []
-        word_vectors = {}
 
         tok_accepter = TokenAccepter()
         ent_accepter = EntityAccepter()
@@ -260,8 +259,7 @@ class MovieServiceSetup:
                 for token in tokenized:
                     if not tok_accepter.accept(token):
                         continue
-                    if (token.lemma_, token.pos_) not in word_vectors:
-                        word_vectors[(token.lemma_, token.pos_)] = token.vector
+                    if (token.lemma_, token.pos_) not in tokenized_plot.Vectors:
                         tokenized_plot.Vectors[(token.lemma_, token.pos_)] = token.vector
                     tokenized_plot.Tokens.append((token.lemma_, token.pos_))
                 for entity in tokenized.ents:
@@ -271,7 +269,8 @@ class MovieServiceSetup:
                 
                 # add special entities pertaining to the movie's production
                 if movie.Director:
-                    tokenized_plot.Entities.append((movie.Director, "DIRECTOR"))
+                    for director in movie.Director:
+                        tokenized_plot.Entities.append((director, "DIRECTOR"))
                 if movie.Cast:
                     for member in movie.Cast:
                         tokenized_plot.Entities.append((member, "CAST"))
@@ -285,10 +284,6 @@ class MovieServiceSetup:
                 tokenized_plots.append((movie.Id, tokenized_plot))
             except:
                 continue
-
-        just_vectors = list(word_vectors.values())
-        with open(vector_sink, "wb+") as vector_file:
-            pickle.dump(just_vectors, vector_file)
 
         sink_frame = pd.DataFrame(tokenized_plots, columns=['Id', 'TokenizedPlot'])
         sink_frame.to_pickle(sink)
@@ -308,19 +303,6 @@ class MovieServiceSetup:
         else:
             print("Tokenized plots already combined")
 
-        if not os.path.exists(vector_sink):
-            print("Combining all known word vectors")
-            all_vectors = []
-            for vector_source in vector_sources:
-                with open(vector_source, "rb") as vector_file:
-                    these_vectors = pickle.load(vector_file)
-                    all_vectors.extend(these_vectors)
-            all_vectors = np.array(all_vectors)
-            with open(vector_sink, "wb+") as vector_file:
-                pickle.dump(all_vectors, vector_file)
-        else:
-            print("Word vectors already combined")
-
     # source is a binary file containing word vector embeddings, 
     # sink is a binary file containing a clustering model,
     # score_sink is a binary file containing scores for different cluster sizes
@@ -329,8 +311,13 @@ class MovieServiceSetup:
             print("Clustering model already chosen")
             return
         
-        with open(source, "rb") as vector_file:
-            word_vectors = pickle.load(vector_file)
+        # get all distinct word vectors
+        all_tokenized = pd.read_pickle(source)
+        word_vectors = {}
+        for _, row in all_tokenized.iterrows():
+            tokenized_plot = row['TokenizedPlot']
+            word_vectors.update(tokenized_plot.Vectors)
+        word_vectors = np.array(list(word_vectors.values()))
 
         print(f"Performing clustering on {len(word_vectors)} word vectors")
         
