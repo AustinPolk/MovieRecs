@@ -127,7 +127,11 @@ class MovieInfo:
             if not value:
                 self.Cast = value
             else:
-                self.Cast = [strip(member) for member in value.split(',')]
+                list_elements = [strip(member) for member in value.split(',')]
+                for element in list_elements:
+                    # handle the case when cast members are separated by newlines
+                    for sub_element in element.split('\n'):
+                        self.Cast.append(sub_element)
         elif attr == 'Genre':
             if not value:
                 self.Genre = value
