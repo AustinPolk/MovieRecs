@@ -226,7 +226,7 @@ class MovieServiceSetup:
         rough_count = 34500
         step = 500
         for start, end in zip(range(0, rough_count+1, step), range(step, rough_count+step+1, step)):
-            this_tokenized_sink = os.path.join(data_folder, f"tokenized_plots_{start}_{end-1}.bin")
+            this_tokenized_sink = os.path.join(data_folder, "tokenized_plots", f"{start}_{end-1}.bin")
             tokenized_sinks.append(this_tokenized_sink)
             self.tokenize_all_plots_plus_vectors(source=movie_info_bin, sink=this_tokenized_sink, start_idx=start, end_idx=end)
         self.combine_tokenized_results(sources=tokenized_sinks, sink=tokenized_plots_bin)
