@@ -4,203 +4,11 @@ import spacy
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import numpy as np
-from fuzzywuzzy import fuzz
 import os
 
-class SparseVectorEncoding:
-    def __init__(self):
-        self.Dimensions: dict[int, float] = {}  # actual values in the vector, indexed by dimension
-        self.Norm: float = None                 # magnitude of the vector, used in normalization/cosine similarity
-    def __getitem__(self, index: int):
-        if index not in self.Dimensions:    # any value not recorded is assumed 0 in the vector
-            return 0
-        return self.Dimensions[index]
-    def __setitem__(self, index: int, value: float):
-        self.Dimensions[index] = value
-    def normalize(self):
-        self.Norm = sum(A * A for A in self.Dimensions.values()) ** 0.5
-        for dim in self.Dimensions:
-            self[dim] /= self.Norm
-    def normed_cosine_similarity(self, other):
-        if not self.Norm:
-            self.normalize()
-        if not other.Norm:
-            other.normalize()
-        common_dims = set(self.Dimensions.keys()) & set(other.Dimensions.keys())
-        similarity = 0
-        for dim in common_dims:
-            similarity += self[dim] * other[dim]
-        return similarity
-
-# for now just relies on string similarity, in the future could be name vectors
-class EntityEncoding:
-    def __init__(self, entity: str, label: str):
-        self.EntityName: str = entity.lower()
-        self.EntityLabel: str = label.lower()
-    def similarity(self, other):
-        if self.EntityLabel != other.EntityLabel:
-            return 0
-        return fuzz.ratio(self.EntityName, other.EntityName) / 100
-
-class MovieEncoding:
-    def __init__(self):
-        self.PlotEncoding: SparseVectorEncoding = SparseVectorEncoding()
-        self.EntityEncodings: list[EntityEncoding] = []
-    def add_entity(self, entity_encoding: EntityEncoding):
-        max_similarity = max(entity_encoding.similarity(x) for x in self.EntityEncodings)
-        if max_similarity < 0.95:    # don't add if it is too similar, it is likely a repeat
-            self.EntityEncodings.append(entity_encoding)
-    def estimate_entity_matches(self, other):
-        these_entities = list(self.EntityEncodings)
-        those_entities = list(other.EntityEncodings)
-        matches = 0
-
-        # attempt to make a 1 to 1 matching from these entities to those entities
-        while these_entities and those_entities:
-            ent = these_entities.pop()
-            best_match = None
-            best_similarity = 0
-            for other_ent in those_entities:
-                similarity = ent.similarity(other_ent)
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_match = other_ent
-            if best_similarity > 0.85:  # threshold for what counts as a match
-                matches += 1
-                those_entities.remove(best_match)
-        
-        return matches
-    def similarity(self, other):
-        max_matches = min(len(self.EntityEncodings), len(other.EntityEncodings)) + 1    # +1 just to make the resultant similarity a little smaller
-        ent_sim_score = self.estimate_entity_matches(other) / max_matches
-        plot_sim_score = self.PlotEncoding.normed_cosine_similarity(other.PlotEncoding)
-        return 0.65 * plot_sim_score + 0.35 * ent_sim_score     # give the plot score a higher weight, but still let the entity score have some say
-
-class MovieInfo:
-    def __init__(self):
-        self.Title: str = None                      # title of the movie
-        self.Plot: str = None                       # plot of the movie
-        self.Year: int = None                       # year that the movie was released
-        self.Director: list[str] = None             # director of the movie, if known (otherwise None)
-        self.Origin: str = None                     # "origin" of the movie (e.g. American, Tamil)
-        self.Cast: list[str] = None                 # list of cast members in the movie, if known (otherwise None)
-        self.Id: int = None                         # unique number to refer to this particular movie
-        self.Genre: list[str] = None                # genres attributed to the movie, if known (otherwise None)
-    def set(self, attr: str, value: str):
-        # replace an actual missing value with empty string
-        if pd.isna(value):
-            value = ""
-
-        # remove any quotes or whitespace from the beginning and end of the string
-        strip = lambda s: s.strip("\"\'\n\r ")
-        value = strip(value)
-        
-        # remove the pipe character if present, as it has a special purpose in the string representation of the movie
-        value = value.replace("|", " ")
-        
-        # if the value is unknown, set it to none
-        none_if_unknown = lambda s: None if not s or s.isspace() or s.lower() == 'unknown' else s
-        value = none_if_unknown(value)
-
-        if attr == 'Title':
-            self.Title = value
-        elif attr == 'Plot':
-            self.Plot = value
-        elif attr == 'Year':
-            self.Year = int(value)
-        elif attr == 'Director':
-            if not value:
-                self.Director = value
-            else:
-                self.Director = []
-                # remove quotes from nicknames
-                dequote = lambda x: x.replace('\'', '').replace('\"', '')
-                list_elements = [dequote(strip(director)) for director in value.split(',')]
-                for element in list_elements:
-                    # if this element looks like "and John Smith", make it "John Smith"
-                    no_and = element[4:] if element.startswith('and ') else element
-                    # split a list separated by an 'and' instead of a','
-                    for sub_element in element.split(' and '):
-                        self.Director.append(sub_element)
-        elif attr == 'Origin':
-            self.Origin = value
-        elif attr == 'Cast':
-            if not value:
-                self.Cast = value
-            else:
-                self.Cast = []
-                list_elements = [strip(member) for member in value.split(',')]
-                for element in list_elements:
-                    # handle the case when cast members are separated by newlines
-                    for sub_element in element.split('\n'):
-                        self.Cast.append(sub_element)
-        elif attr == 'Genre':
-            if not value:
-                self.Genre = value
-            else:
-                self.Genre = []
-                # split the genre into a list of genres
-                list_elements = [strip(genre) for genre in value.split(',')]
-                # try to get as granular of data as possible on the genre
-                for element in list_elements:
-                    self.Genre.append(element)
-                    # separate genres like "romantic comedy" into "romantic" and "comedy"
-                    for sub_element in element.split():
-                        self.Genre.append(sub_element)
-                        # separate genres like "drama/thriller" into "drama" and "thriller"
-                        for sub_sub_element in sub_element.split('-/'):
-                            self.Genre.append(sub_sub_element)
-        elif attr == 'Id':
-            self.Id = int(value)
-        else:
-            raise Exception() 
-    def describe(self, short: bool):
-        desc = f"{self.Title} ({self.Year})"
-        if short:
-            return desc
-        if self.Origin:
-            desc = f"{desc[:-1]}, {self.Origin})"
-        if self.Director:
-            desc = f"{desc}, directed by "
-            if len(self.Director) == 1:
-                desc += self.Director[0]
-            else:
-                for name in self.Director[:-1]:
-                    desc += f"{name}, "
-                desc += f"and {self.Director[-1]}"
-        if self.Cast:
-            desc = f"{desc}, starring "
-            if len(self.Cast) == 1:
-                desc += self.Cast[0]
-            else:
-                for name in self.Cast[:-1]:
-                    desc += f"{name}, "
-                desc += f"and {self.Cast[-1]}"
-        return desc
-
-class TokenizedPlot:
-    def __init__(self):
-        self.Tokens: list[(str, str)] = []
-        self.Vectors: dict[(str, str), np.ndarray] = {}
-        self.Entities: list[(str, str)] = []
-
-class TokenAccepter:
-    def __init__(self):
-        pass
-    def accept(self, token):
-        if token.pos_ not in ["NOUN", "VERB", "ADJ", "ADV"]:    # only accept words in an open class
-            return False
-        if not token.has_vector:    # only accept words with available vector embeddings
-            return False
-        return True
-    
-class EntityAccepter:
-    def __init__(self):
-        pass
-    def accept(self, entity):
-        if entity.label_ in ["TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"]:    # do not accept these entity types, they aren't very useful
-            return False
-        return True
+from inform import MovieInfo, TokenizedPlot
+from accept import TokenAccepter, EntityAccepter
+from encode import MovieEncoding
 
 class MovieServiceSetup:
     def __init__(self):
@@ -390,8 +198,7 @@ class MovieServiceSetup:
                 movie_encoding.PlotEncoding.normalize()
 
                 for entity, label in tokenized_plot.Entities:
-                    ent_encoding = EntityEncoding(entity, label)
-                    movie_encoding.add_entity(ent_encoding)
+                    movie_encoding.add_entity(entity, label)
 
                 print(f"Encoded id={id}")
 
@@ -426,6 +233,3 @@ class MovieServiceSetup:
 
         self.train_cluster_model_on_vectors(source=tokenized_plots_bin, sink=cluster_model_bin, score_sink=cluster_scores_bin, min_clusters=7000, max_clusters=15000, cluster_step=500)
         self.encode_all_movies(source=tokenized_plots_bin, cluster_source=cluster_model_bin, sink=movie_encodings_bin)
-
-if __name__ == '__main__':
-    setup = MovieServiceSetup()
