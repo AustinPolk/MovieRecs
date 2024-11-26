@@ -47,7 +47,7 @@ class MovieServiceSetup:
     # source is a binary file containing formatted movie info, 
     # sink is a binary file containing tokenized plots, 
     # vector_sink is a binary file of word vector embeddings
-    def tokenize_all_plots_plus_vectors(self, source: str, sink: str, start_idx: int, end_idx: int):
+    def tokenize_all_plots_plus_vectors(self, source: str, sink: str, start_idx: int, end_idx: int, blacklist: list[int]):
         # this step has already been completed
         if os.path.exists(sink):
             print(f"Plots {start_idx} to {end_idx-1} alraedy tokenized")
@@ -61,7 +61,7 @@ class MovieServiceSetup:
         ent_accepter = EntityAccepter()
         for idx, row in source_frame.iterrows():
             # note that if end_idx < start_idx, it will go from start_idx all the way through (this is intended)
-            if idx < start_idx:
+            if idx < start_idx or idx in blacklist:
                 continue
             elif idx == end_idx:
                 break
@@ -98,7 +98,8 @@ class MovieServiceSetup:
                 
                 print(movie.Id, movie.describe(False), f"({len(tokenized_plot.Tokens)}, {len(tokenized_plot.Entities)})")
                 tokenized_plots.append((movie.Id, tokenized_plot))
-            except:
+            except Exception as e:
+                print('Fuck, ', e)
                 continue
 
         sink_frame = pd.DataFrame(tokenized_plots, columns=['Id', 'TokenizedPlot'])
@@ -122,31 +123,55 @@ class MovieServiceSetup:
     # source is a binary file containing word vector embeddings, 
     # sink is a binary file containing a clustering model,
     # score_sink is a binary file containing scores for different cluster sizes
-    def train_cluster_model_on_vectors(self, source: str, sink: str, score_sink:str, min_clusters: int, max_clusters: int, cluster_step: int = 500):
+    def train_cluster_model_on_vectors(self, source: str, sink: str, score_sink:str, min_clusters: int, max_clusters: int, cluster_tries: int = 30):
         if os.path.exists(sink) and os.path.exists(score_sink):
             print("Clustering model already chosen")
             return
         
         # get all distinct word vectors
         all_tokenized = pd.read_pickle(source)
+        occurrences = {}
         word_vectors = {}
         for _, row in all_tokenized.iterrows():
             tokenized_plot = row['TokenizedPlot']
             word_vectors.update(tokenized_plot.Vectors)
-        word_vectors = np.array(list(word_vectors.values()))
+            # count how many times each distinct token appears
+            for token_pos in tokenized_plot.Vectors:
+                if token_pos not in occurrences:
+                    occurrences[token_pos] = 0
+                occurrences[token_pos] += 1
 
-        print(f"Performing clustering on {len(word_vectors)} word vectors")
+        # only include a word vector if it occurs in at least 200 movie plots,
+        # attempt to remove strange, outlier words that end up becoming their own cluster
+        trimmed_vectors = {k:i for k, i in word_vectors.items() if occurrences[k] > 100}
+        word_vectors = np.array(list(trimmed_vectors.values()))
+
+        print(f"Performing clustering on {len(word_vectors)} word vectors (down from {len(occurrences)})")
         
         best_cluster_model = None
         best_score = -1
         all_scores = {}
+        cluster_statistics = {}
 
-        # do max clusters + 1 so that max_clusters will get tested and not skipped
+        max_clusters = min(max_clusters, len(word_vectors) - 1)
+        cluster_step = (max_clusters - min_clusters) // (cluster_tries - 1)
+
         for n_clusters in range(min_clusters, max_clusters + 1, cluster_step):
             cluster_model = KMeans(n_clusters=n_clusters, random_state=26)
             cluster_model.fit(word_vectors)
             score = silhouette_score(word_vectors, cluster_model.labels_)
             print(f"Silhouette score for {n_clusters} clusters: {score}")
+
+            cluster_sizes = np.bincount(cluster_model.labels_)
+            min_size = min(cluster_sizes)
+            max_size = max(cluster_sizes)
+            avg_size = np.average(cluster_sizes)
+            cluster_statistics[n_clusters] = {
+                'Minimum': min_size,
+                'Maximum': max_size,
+                'Average': avg_size
+            }
+            print(f"Max: {max_size}\tMin: {min_size}\tAvg: {avg_size}")
 
             if score > best_score:
                 best_score = score
@@ -159,8 +184,12 @@ class MovieServiceSetup:
         with open(sink, "wb+") as cluster_file:
             pickle.dump(best_cluster_model, cluster_file)
         
+        scores = {
+            'Scores': all_scores,
+            'Statistics': cluster_statistics
+        }
         with open(score_sink, "wb+") as score_file:
-            pickle.dump(all_scores, score_file)
+            pickle.dump(scores, score_file)
 
     # source is a binary file containing tokenized plots
     # cluster_source is a binary file containing a clustering model
@@ -190,7 +219,7 @@ class MovieServiceSetup:
                     # to speed up computation, memoize clustering results
                     if (token, pos) not in clustering_memo:
                         word_vector = tokenized_plot.Vectors[(token, pos)]
-                        dim = cluster_model.predict(np.array([word_vector]))
+                        dim = int(cluster_model.predict(np.array([word_vector]))[0])
                         clustering_memo[(token, pos)] = dim
                     else:
                         dim = clustering_memo[(token, pos)]
@@ -203,7 +232,8 @@ class MovieServiceSetup:
                 print(f"Encoded id={id}")
 
                 all_encodings.append((id, movie_encoding))
-            except:
+            except Exception as e:
+                print('Fuck, ', e)
                 continue
         
         sink_frame = pd.DataFrame(all_encodings, columns=['Id', 'MovieEncoding'])
@@ -221,15 +251,24 @@ class MovieServiceSetup:
         movie_encodings_bin = os.path.join(data_folder, "movie_encodings.bin")
 
         self.load_all_movie_info(source=movie_data_csv, sink=movie_info_bin)
+        movie_blacklist = []
         
         tokenized_sinks = []
-        rough_count = 34500
-        step = 500
+        rough_count = 35000
+        step = 100
         for start, end in zip(range(0, rough_count+1, step), range(step, rough_count+step+1, step)):
             this_tokenized_sink = os.path.join(data_folder, "tokenized_plots", f"{start}_{end-1}.bin")
             tokenized_sinks.append(this_tokenized_sink)
-            self.tokenize_all_plots_plus_vectors(source=movie_info_bin, sink=this_tokenized_sink, start_idx=start, end_idx=end)
+            self.tokenize_all_plots_plus_vectors(source=movie_info_bin, sink=this_tokenized_sink, start_idx=start, end_idx=end, blacklist=movie_blacklist)
         self.combine_tokenized_results(sources=tokenized_sinks, sink=tokenized_plots_bin)
 
-        self.train_cluster_model_on_vectors(source=tokenized_plots_bin, sink=cluster_model_bin, score_sink=cluster_scores_bin, min_clusters=7000, max_clusters=15000, cluster_step=500)
+        self.train_cluster_model_on_vectors(source=tokenized_plots_bin, sink=cluster_model_bin, score_sink=cluster_scores_bin, min_clusters=500, max_clusters=10000, cluster_tries=30)
         self.encode_all_movies(source=tokenized_plots_bin, cluster_source=cluster_model_bin, sink=movie_encodings_bin)
+
+    def encodings(self):
+        data_folder = "data"
+        movie_encodings_bin = os.path.join(data_folder, "movie_encodings.bin")
+        return pd.read_pickle(movie_encodings_bin)
+
+if __name__=='__main__':
+    MovieServiceSetup()

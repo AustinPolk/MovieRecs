@@ -41,7 +41,10 @@ class MovieEncoding:
         self.EntityEncodings: list[EntityEncoding] = []
     def add_entity(self, entity: str, label: str):
         entity_encoding = EntityEncoding(entity, label)
-        max_similarity = max(entity_encoding.similarity(x) for x in self.EntityEncodings)
+        if self.EntityEncodings:
+            max_similarity = max(entity_encoding.similarity(x) for x in self.EntityEncodings)
+        else:
+            max_similarity = 0.0
         if max_similarity < 0.95:    # don't add if it is too similar, it is likely a repeat
             self.EntityEncodings.append(entity_encoding)
     def estimate_entity_matches(self, other):
