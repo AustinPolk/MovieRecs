@@ -67,8 +67,8 @@ class MovieEncoding:
                 those_entities.remove(best_match)
         
         return matches
-    def similarity(self, other):
+    def similarity(self, other, plot_weight: float):
         max_matches = min(len(self.EntityEncodings), len(other.EntityEncodings)) + 1    # +1 just to make the resultant similarity a little smaller
         ent_sim_score = self.estimate_entity_matches(other) / max_matches
         plot_sim_score = self.PlotEncoding.normed_cosine_similarity(other.PlotEncoding)
-        return 0.65 * plot_sim_score + 0.35 * ent_sim_score     # give the plot score a higher weight, but still let the entity score have some say
+        return plot_weight * plot_sim_score + (1 - plot_weight) * ent_sim_score     # give the plot score a higher weight, but still let the entity score have some say

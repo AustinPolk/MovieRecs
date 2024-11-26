@@ -269,6 +269,8 @@ class MovieServiceSetup:
         data_folder = "data"
         movie_encodings_bin = os.path.join(data_folder, "movie_encodings.bin")
         return pd.read_pickle(movie_encodings_bin)
-
-if __name__=='__main__':
-    MovieServiceSetup()
+    
+    def movieinfos(self):
+        data_folder = "data"
+        movie_info_bin = os.path.join(data_folder, "movie_info.bin")
+        return pd.read_pickle(movie_info_bin)
