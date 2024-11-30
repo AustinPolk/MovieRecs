@@ -3,11 +3,39 @@ from sklearn.cluster import KMeans
 import os
 import pickle
 import spacy
-from accept import TokenAccepter, EntityAccepter
+from accept import TokenAccepter
 from encode import SparseVectorEncoding, MovieEncoding
 import numpy as np
 from fuzzywuzzy import fuzz
 from inform import MovieInfo
+
+# it is the chatbot's job to divine this information
+class UserPreferences:
+    def __init__(self):
+        self.DescribedPlots: list[str] = None
+        self.Directors: list[str] = None
+        self.Actors: list[str] = None
+        self.KnownTitles: list[str] = None
+        self.KnownMovies: list[int] = None
+        self.Genres: list[str] = None
+        self.MoviesBefore: int = None
+        self.MoviesAfter: int = None
+        self.AllowAmericanOrigin: bool = None
+        self.AllowBollywoordOrigin: bool = None
+        self.AllowOtherOrigin: bool = None
+
+class MovieRecommendation:
+    def __init__(self):
+        self.RecommendedMovie: MovieInfo 
+        self.SimilarThemesToDescribed: list[str]  # list of user-provided descriptions that it has similar themes to 
+        self.SimilarThemesToMovies: list[str]     # list of known liked movie titles that it has similar themes to
+        self.SimilarGenresToMovies: list[str]     # list of known liked movie titles that it has similar genres to
+        self.SimilarActorsToMovies: list[str]     # list of known liked movie titles that it has a similar cast to
+        self.ExpressedLikeDirectors: list[str]    # list of director(s) for this movie that the user likes
+        self.ExpressedLikeActors: list[str]       # list of actors in this movie that the user likes
+        self.ExpressedLikeGenres: list[str]       # list of genres for this movie that the user likes
+        self.WithinDesiredTimePeriod: bool        # does the movie fall within the desired time period
+        self.HasDesiredOrigin: bool               # does the movie have the right origin
 
 class MovieService:
     def __init__(self):
@@ -66,7 +94,8 @@ class MovieService:
         ids = []
         for id in director_names:
             for director_name in director_names[id]:
-                if fuzz.ratio(director_name, director) > 90:
+                # use partial ratio for directors in case only the last name is specified (e.g. Tarantino)
+                if fuzz.partial_ratio(director_name, director) > 90:
                     ids.append(id)
                     break
         return ids
@@ -124,8 +153,36 @@ class MovieService:
         ids = []
         for id, cast in all_cast_members.items():
             matches = 0
-            # continue from here by counting how many desired cast members are here, sim score is that divided by ideal
+            for desired_member in cast_members:
+                for member in cast:
+                    if fuzz.ratio(desired_member, member) > 90:
+                        matches += 1
+            similarity = matches / ideal_matches
+            if similarity > similarity_threshold:
+                ids.append(id)
+        
+        return ids
 
+    def query_movies_with_similar_genre(self, similar_to: str|int, from_ids: list[str], similarity_threshold: float):
+        all_genres = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'GENRE'] for id in from_ids}
+        if similar_to in self.MovieEncodings: # id for a movie
+            movie_genres = all_genres[similar_to]
+        else:
+            movie_genres = [member.strip() for member in similar_to.split(',')]
+        ideal_matches = len(movie_genres)
+
+        ids = []
+        for id, genres in all_genres.items():
+            matches = 0
+            for desired_genre in movie_genres:
+                for genre in genres:
+                    if fuzz.ratio(desired_genre, genre) > 90:
+                        matches += 1
+            similarity = matches / ideal_matches
+            if similarity > similarity_threshold:
+                ids.append(id)
+        
+        return ids
 
     def query_movies_before(self, year: int, from_ids: list[str]):
         return [id for id in from_ids if int(self.MovieInfo[id].Year) < year]
@@ -138,3 +195,6 @@ class MovieService:
     
     def query_bollywood_movies(self, from_ids: list[str]):
         return [id for id in from_ids if self.MovieInfo[id].Origin.lower() == 'bollywood']
+
+    def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10):
+        ids_remaining = list(self.MovieEncodings.keys())
