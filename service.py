@@ -25,8 +25,8 @@ class UserPreferences:
         self.AllowOtherOrigin: bool = None
 
 class MovieRecommendation:
-    def __init__(self):
-        self.RecommendedMovie: MovieInfo 
+    def __init__(self, movie: MovieInfo):
+        self.RecommendedMovie: MovieInfo = movie  # information for the actual movie being recommended 
         self.SimilarThemesToDescribed: list[str]  # list of user-provided descriptions that it has similar themes to 
         self.SimilarThemesToMovies: list[str]     # list of known liked movie titles that it has similar themes to
         self.SimilarGenresToMovies: list[str]     # list of known liked movie titles that it has similar genres to
@@ -36,12 +36,37 @@ class MovieRecommendation:
         self.ExpressedLikeGenres: list[str]       # list of genres for this movie that the user likes
         self.WithinDesiredTimePeriod: bool        # does the movie fall within the desired time period
         self.HasDesiredOrigin: bool               # does the movie have the right origin
+    # return a recommendation score based on the volume of criteria matching the user preferences
+    def score(self):
+        score = 0
+        if self.SimilarThemesToDescribed:
+            score += (1 + 0.1 * (len(self.SimilarThemesToDescribed) - 1))
+        if self.SimilarThemesToMovies:
+            score += (1 + 0.1 * (len(self.SimilarThemesToMovies) - 1))
+        if self.SimilarGenresToMovies:
+            score += (1 + 0.1 * (len(self.SimilarGenresToMovies) - 1))
+        if self.SimilarActorsToMovies:
+            score += (1 + 0.1 * (len(self.SimilarActorsToMovies) - 1))
+        if self.ExpressedLikeDirectors:
+            score += (1 + 0.1 * (len(self.ExpressedLikeDirectors) - 1))
+        if self.ExpressedLikeActors:
+            score += (1 + 0.1 * (len(self.ExpressedLikeActors) - 1))
+        if self.ExpressedLikeGenres:
+            score += (1 + 0.1 * (len(self.ExpressedLikeGenres) - 1))
+        if self.WithinDesiredTimePeriod:
+            score += 1
+        if self.HasDesiredOrigin:
+            score += 1
+        return score
+
 
 class MovieService:
     def __init__(self):
         self.MovieInfo: dict[int, MovieInfo] = {}
         self.MovieEncodings: dict[int, MovieEncoding] = {}
         self.ClusterModel: KMeans = None
+        self.Recommendations: dict[int, MovieRecommendation] = {}
+        self.load_setup_data()
 
     def load_setup_data(self):
         data_folder = "data"
@@ -61,6 +86,8 @@ class MovieService:
 
         with open(cluster_model_bin, 'rb') as cluster_model_file:
             self.ClusterModel = pickle.load(cluster_model_file)
+
+        self.Recommendations = {id: MovieRecommendation(self.MovieInfo[id]) for id in ids}
 
     def encode_plot_theme_query(self, plot_query: str):
         language = spacy.load("en_core_web_lg")
