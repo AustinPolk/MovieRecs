@@ -26,16 +26,16 @@ class UserPreferences:
 
 class MovieRecommendation:
     def __init__(self, movie: MovieInfo):
-        self.RecommendedMovie: MovieInfo = movie  # information for the actual movie being recommended 
-        self.SimilarThemesToDescribed: list[str]  # list of user-provided descriptions that it has similar themes to 
-        self.SimilarThemesToMovies: list[str]     # list of known liked movie titles that it has similar themes to
-        self.SimilarGenresToMovies: list[str]     # list of known liked movie titles that it has similar genres to
-        self.SimilarActorsToMovies: list[str]     # list of known liked movie titles that it has a similar cast to
-        self.ExpressedLikeDirectors: list[str]    # list of director(s) for this movie that the user likes
-        self.ExpressedLikeActors: list[str]       # list of actors in this movie that the user likes
-        self.ExpressedLikeGenres: list[str]       # list of genres for this movie that the user likes
-        self.WithinDesiredTimePeriod: bool        # does the movie fall within the desired time period
-        self.HasDesiredOrigin: bool               # does the movie have the right origin
+        self.RecommendedMovie: MovieInfo = movie          # information for the actual movie being recommended 
+        self.SimilarThemesToDescribed: list[str] = []     # list of user-provided descriptions that it has similar themes to 
+        self.SimilarThemesToMovies: list[str] = []        # list of known liked movie titles that it has similar themes to
+        self.SimilarGenresToMovies: list[str] = []        # list of known liked movie titles that it has similar genres to
+        self.SimilarActorsToMovies: list[str] = []        # list of known liked movie titles that it has a similar cast to
+        self.ExpressedLikeDirectors: list[str] = []       # list of director(s) for this movie that the user likes
+        self.ExpressedLikeActors: list[str] = []          # list of actors in this movie that the user likes
+        self.ExpressedLikeGenres: list[str] = []          # list of genres for this movie that the user likes
+        self.WithinDesiredTimePeriod: bool = True         # does the movie fall within the desired time period
+        self.HasDesiredOrigin: bool = True                # does the movie have the right origin
     # return a recommendation score based on the volume of criteria matching the user preferences
     def score(self):
         score = 0
@@ -58,7 +58,6 @@ class MovieRecommendation:
         if self.HasDesiredOrigin:
             score += 1
         return score
-
 
 class MovieService:
     def __init__(self):
@@ -223,5 +222,125 @@ class MovieService:
     def query_bollywood_movies(self, from_ids: list[str]):
         return [id for id in from_ids if self.MovieInfo[id].Origin.lower() == 'bollywood']
 
+    def query_other_foreign_movies(self, from_ids: list[str]):
+        return [id for id in from_ids if self.MovieInfo[id].Origin.lower() != 'bollywood' and self.MovieInfo[id].Origin.lower() != 'american']
+
+    # works more like a filter, does not rank
+    def query_from_user_preferences(self, user_preferences: UserPreferences):
+        pass
+
+    def recommend_movies_by_director(self, director: str):
+        director_names = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'director'] for id in self.Recommendations}
+        for id in director_names:
+            for director_name in director_names[id]:
+                # use partial ratio for directors in case only the last name is specified (e.g. Tarantino)
+                if fuzz.partial_ratio(director_name, director) > 90:
+                    self.Recommendations[id].ExpressedLikeDirectors.append(director_name)
+
+    def recommend_movies_by_actor(self, actor: str):
+        actor_names = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'cast'] for id in self.Recommendations}
+        for id in actor_names:
+            for actor_name in actor_names[id]:
+                if fuzz.ratio(actor_name, actor) > 90:
+                    self.Recommendations[id].ExpressedLikeActors.append(actor_name)
+
+    def recommend_movies_by_genre(self, genre: str):
+        genres = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'genre'] for id in self.Recommendations}
+        for id in genres:
+            for genre_name in genres[id]:
+                if fuzz.ratio(genre_name, genre) > 95:
+                    self.Recommendations[id].ExpressedLikeGenres.append(genre_name)
+
+    def recommend_movies_with_similar_plot_themes(self, similar_to: str|int, similarity_threshold: float, cosine: bool = True):
+        described = False
+        if similar_to in self.MovieEncodings: # it's an id
+            similar_encoding = self.MovieEncodings[similar_to].PlotEncoding
+        else: # it's a plot string to encode
+            similar_encoding = self.encode_plot_theme_query(similar_to)
+            described = True
+
+        plot_encodings = {id: self.MovieEncodings[id].PlotEncoding for id in self.Recommendations}
+
+        for id, encoding in plot_encodings.items():
+            if cosine:
+                similarity = encoding.normed_cosine_similarity(similar_encoding)
+            else: # number of similar themes, regardless of intensity, over number of themes in the similar encoding
+                these_themes = set(similar_encoding.Dimensions.keys())
+                those_themes = set(encoding.Dimensions.keys())
+                similar_themes = len(these_themes & those_themes)
+                similarity = similar_themes / len(these_themes)
+            if similarity >= similarity_threshold:
+                if described:
+                    self.Recommendations[id].SimilarThemesToDescribed.append(similar_to)
+                else:
+                    title = self.MovieInfo[id].Title
+                    self.Recommendations[id].SimilarThemesToMovies.append(title)
+
+    def recommend_movies_with_similar_cast(self, similar_to: str|int, similarity_threshold: float):
+        all_cast_members = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'CAST'] for id in self.Recommendations}
+        # for now assume that it always is an id
+        if similar_to in self.MovieEncodings: # id for a movie
+            cast_members = all_cast_members[similar_to]
+        #else:
+        #    cast_members = [member.strip() for member in similar_to.split(',')]
+        ideal_matches = len(cast_members)
+
+        for id, cast in all_cast_members.items():
+            matches = 0
+            for desired_member in cast_members:
+                for member in cast:
+                    if fuzz.ratio(desired_member, member) > 90:
+                        matches += 1
+            similarity = matches / ideal_matches
+            if similarity > similarity_threshold:
+                title = self.MovieInfo[id].Title
+                self.Recommendations[id].SimilarActorsToMovies.append(title)
+
+    def recommend_movies_with_similar_genre(self, similar_to: str|int, similarity_threshold: float):
+        all_genres = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'GENRE'] for id in self.Recommendations}
+        # for now assume that it is always an id
+        if similar_to in self.MovieEncodings: # id for a movie
+            movie_genres = all_genres[similar_to]
+        #else:
+        #    movie_genres = [member.strip() for member in similar_to.split(',')]
+        ideal_matches = len(movie_genres)
+
+        for id, genres in all_genres.items():
+            matches = 0
+            for desired_genre in movie_genres:
+                for genre in genres:
+                    if fuzz.ratio(desired_genre, genre) > 90:
+                        matches += 1
+            similarity = matches / ideal_matches
+            if similarity > similarity_threshold:
+                title = self.MovieInfo[id].Title
+                self.Recommendations[id].SimilarGenresToMovies.append(title)
+
+    def recommend_movies_before(self, year: int):
+        for _, recommendation in self.Recommendations.items():
+            if recommendation.RecommendedMovie.Year >= year:
+                recommendation.WithinDesiredTimePeriod = False
+
+    def recommend_movies_after_or_on(self, year: int):
+        for _, recommendation in self.Recommendations.items():
+            if recommendation.RecommendedMovie.Year < year:
+                recommendation.WithinDesiredTimePeriod = False
+    
+    def recommend_american_movies(self):
+        for _, recommendation in self.Recommendations.items():
+            if recommendation.RecommendedMovie.Origin.lower() == 'american':
+                recommendation.HasDesiredOrigin = True
+    
+    def recommend_bollywood_movies(self):
+        for _, recommendation in self.Recommendations.items():
+            if recommendation.RecommendedMovie.Origin.lower() == 'bollywood':
+                recommendation.HasDesiredOrigin = True
+
+    def recommend_other_foreign_movies(self):
+        for _, recommendation in self.Recommendations.items():
+            if recommendation.RecommendedMovie.Origin.lower() != 'american' and recommendation.RecommendedMovie.Origin.lower() != 'bollywood':
+                recommendation.HasDesiredOrigin = True
+
+    # does not filter, but will rank
     def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10):
-        ids_remaining = list(self.MovieEncodings.keys())
+        pass
