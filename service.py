@@ -15,8 +15,8 @@ class UserPreferences:
         self.DescribedPlots: list[str] = None
         self.Directors: list[str] = None
         self.Actors: list[str] = None
-        self.KnownTitles: list[str] = None
-        self.KnownMovies: list[int] = None
+        self.KnownLikedTitles: list[str] = None
+        self.KnownLikedMovies: list[int] = None
         self.Genres: list[str] = None
         self.MoviesBefore: int = None
         self.MoviesAfter: int = None
@@ -226,8 +226,116 @@ class MovieService:
         return [id for id in from_ids if self.MovieInfo[id].Origin.lower() != 'bollywood' and self.MovieInfo[id].Origin.lower() != 'american']
 
     # works more like a filter, does not rank
-    def query_from_user_preferences(self, user_preferences: UserPreferences):
-        pass
+    def query_from_user_preferences(self, user_preferences: UserPreferences, similarity_threshold: float = 0.6, union_query: bool = True, top_n: int = 10):
+        remaining_ids = set(self.MovieEncodings.keys())
+        union = set()
+
+        if user_preferences.DescribedPlots:
+            all_similar = set()
+            for described in user_preferences.DescribedPlots:
+                similar_to_described = self.query_movies_with_similar_plot_themes(described, list(remaining_ids), similarity_threshold)
+                all_similar |= similar_to_described
+
+            if union_query:
+                union |= all_similar
+            else:
+                remaining_ids &= all_similar
+
+        if user_preferences.KnownLikedMovies:
+            all_similar = set()
+            for movie_id in user_preferences.KnownLikedMovies:
+                with_similar_themes = self.query_movies_with_similar_plot_themes(movie_id, list(remaining_ids), similarity_threshold)
+                with_similar_cast = self.query_movies_with_similar_cast(movie_id, list(remaining_ids), similarity_threshold)
+                with_similar_genre = self.query_movies_with_similar_genre(movie_id, list(remaining_ids), similarity_threshold)
+                similar_movies = list(set(with_similar_themes) | set(with_similar_cast) | set(with_similar_genre))
+                all_similar |= similar_movies
+
+            if union_query:
+                union |= all_similar
+            else:
+                remaining_ids &= all_similar
+        
+        if user_preferences.Directors:
+            all_by_director = set()
+            for director in user_preferences.Directors:
+                by_director = self.query_movies_by_director(director, list(remaining_ids))
+                all_by_director |= by_director
+
+            if union_query:
+                union |= all_by_director
+            else:
+                remaining_ids &= all_by_director
+        
+        if user_preferences.Actors:
+            all_with_actor = set()
+            for actor in user_preferences.Actors:
+                with_actor = self.query_movies_by_actor(actor, list(remaining_ids))
+                all_with_actor |= with_actor
+            
+            if union_query:
+                union |= all_with_actor
+            else:
+                remaining_ids &= all_with_actor
+        
+        if user_preferences.Genres:
+            all_in_genre = set()
+            for genre in user_preferences.Genres:
+                in_genre = self.query_movies_by_genre(genre, list(remaining_ids))
+                all_in_genre |= in_genre
+
+            if union_query:
+                union |= all_in_genre
+            else:
+                remaining_ids &= all_in_genre
+                  
+        if user_preferences.MoviesAfter:
+            movies_after = self.query_movies_after_or_on(user_preferences.MoviesAfter, list(remaining_ids))
+
+            if union_query:
+                union |= movies_after
+            else:
+                remaining_ids &= movies_after
+
+        if user_preferences.MoviesBefore:
+            movies_before = self.query_movies_before(user_preferences.MoviesBefore, list(remaining_ids))
+
+            if union_query:
+                union |= movies_before
+            else:
+                remaining_ids &= movies_before
+
+        if user_preferences.AllowAmericanOrigin:
+            american = self.query_american_movies(list(remaining_ids))
+
+            if union_query:
+                union |= american
+            else:
+                remaining_ids &= american
+
+        if user_preferences.AllowBollywoordOrigin:
+            bollywood = self.query_bollywood_movies(list(remaining_ids))
+
+            if union_query:
+                union |= bollywood
+            else:
+                remaining_ids &= bollywood
+
+        if user_preferences.AllowOtherOrigin:
+            other_origin = self.query_other_foreign_movies(list(remaining_ids))
+
+            if union_query:
+                union |= other_origin
+            else:
+                remaining_ids &= other_origin
+
+        if union_query:
+            movie_ids = list(union)
+        else:
+            movie_ids = list(remaining_ids)
+        
+        queried_movies = [self.MovieInfo[x] for x in movie_ids]
+
+        return queried_movies
 
     def recommend_movies_by_director(self, director: str):
         director_names = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'director'] for id in self.Recommendations}
@@ -342,5 +450,38 @@ class MovieService:
                 recommendation.HasDesiredOrigin = True
 
     # does not filter, but will rank
-    def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10):
-        pass
+    def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10, similarity_threshold: float = 0.6):
+        
+        if user_preferences.DescribedPlots:
+            for described in user_preferences.DescribedPlots:
+                self.recommend_movies_with_similar_plot_themes(described, similarity_threshold)
+        if user_preferences.KnownLikedMovies:
+            for movie_id in user_preferences.KnownLikedMovies:
+                self.recommend_movies_with_similar_plot_themes(movie_id, similarity_threshold)
+                self.recommend_movies_with_similar_cast(movie_id, similarity_threshold)
+                self.recommend_movies_with_similar_genre(movie_id, similarity_threshold)
+        if user_preferences.Directors:
+            for director in user_preferences.Directors:
+                self.recommend_movies_by_director(director)
+        if user_preferences.Actors:
+            for actor in user_preferences.Actors:
+                self.recommend_movies_by_actor(actor)
+        if user_preferences.Genres:
+            for genre in user_preferences.Genres:
+                self.recommend_movies_by_genre(genre)
+        if user_preferences.MoviesAfter:
+            self.recommend_movies_after_or_on(user_preferences.MoviesAfter)
+        if user_preferences.MoviesBefore:
+            self.recommend_movies_before(user_preferences.MoviesBefore)
+        if user_preferences.AllowAmericanOrigin:
+            self.recommend_american_movies()
+        if user_preferences.AllowBollywoordOrigin:
+            self.recommend_bollywood_movies()
+        if user_preferences.AllowOtherOrigin:
+            self.recommend_other_foreign_movies()
+
+        movie_ids = list(self.Recommendations.keys())
+        recommended_ids = sorted(movie_ids, lambda x: self.Recommendations[x].score(), reverse=True)[:top_n]
+        recommendations = [self.Recommendations[x] for x in recommended_ids]
+
+        return recommendations
