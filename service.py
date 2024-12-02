@@ -155,7 +155,8 @@ class MovieService:
                 self.Autoencoder = autoencoder
                 return
         else:
-            raise Exception("loss threshold too low")
+            print(f"Loss threshold too low, raising to {loss_threshold * 1.01} from {loss_threshold}")
+            self.use_autoencoder(denormalize, loss_threshold * 1.01)
 
     def encode_plot_theme_query(self, plot_query: str):
         language = spacy.load("en_core_web_lg")
@@ -183,7 +184,7 @@ class MovieService:
             if not movieInfo.Title:
                 similarities[id] = 0
             else:
-                similarities[id] = fuzz.partial_ratio(title.lower(), movieInfo.Title.lower())
+                similarities[id] = fuzz.ratio(title.lower(), movieInfo.Title.lower())
         sorted_ids = sorted(ids, key = lambda x: similarities[x], reverse=True)[:top_n]
         return [self.MovieInfo[x] for x in sorted_ids]
 
@@ -552,6 +553,13 @@ class MovieService:
 
     # does not filter, but will rank
     def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10, similarity_threshold: float = 0.6):
+        # check if there are titles the user likes which haven't been correlated to a movie Id
+        if user_preferences.KnownLikedTitles and not user_preferences.KnownLikedMovies:
+            for title in user_preferences.KnownLikedTitles:
+                likely_movie = self.query_movies_by_title(title, top_n=1)[0]
+                likely_id = likely_movie.Id
+                user_preferences.KnownLikedMovies.append(likely_id)
+        
         ids = list(self.MovieEncodings.keys())
         self.Recommendations = {id: MovieRecommendation(self.MovieInfo[id]) for id in ids}
 
