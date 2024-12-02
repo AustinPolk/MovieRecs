@@ -60,11 +60,11 @@ class MovieRecommendation:
         if self.HasDesiredOrigin:
             score += 1
         return score
-    def explain(self):
-        exp_strs = [f'{self.RecommendedMovie.describe(True)} was recommended because']
+    def explain(self, bullet_list: bool, return_list: bool = False):
+        exp_strs = [f'\"{self.RecommendedMovie.describe(True)}\" was recommended for the following reasons: ']
         if self.SimilarThemesToDescribed:
             for described in self.SimilarThemesToDescribed:
-                exp_str = f'It has similar themes to your description of {described}'
+                exp_str = f'It has similar themes to your description of \"{described}\"'
                 exp_strs.append(exp_str)
         if self.SimilarThemesToMovies:
             for title in self.SimilarThemesToMovies:
@@ -97,10 +97,22 @@ class MovieRecommendation:
             exp_str = 'It has the desired regional origin'
             exp_strs.append(exp_str)
 
+        if len(exp_strs) == 1:
+            exp_str = 'I\'m not really sure'
+            exp_strs.append(exp_str)
+
+        if return_list:
+            return exp_strs
+
         explanation = exp_strs[0]
-        for exp in exp_strs[1:]:
-            explanation += f'\n\t- {exp}'
-        explanation += '\n'
+        if bullet_list:
+            for exp in exp_strs[1:]:
+                explanation += f'\n\t- {exp}'
+            explanation += '\n'
+        else:
+            for exp in exp_strs[1:]:
+                explanation += f'{exp}, and'
+            explanation = explanation[:-5]  # remove trailing and
         return explanation
 
 class MovieService:
