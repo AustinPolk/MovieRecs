@@ -136,7 +136,7 @@ class Chatter:
 
         while not self.Checklist.done_yet():
             next_request = self.Checklist.next_request()
-            self.generate_prompt()
+            self.generate_prompt(next_request)
             self.get_and_parse_user_response()
 
         waiting = self.Checklist.next_request()
