@@ -98,7 +98,7 @@ class Chatter:
         self.Paraphraser = pipeline("text2text-generation", model="Vamsi/T5_Paraphrase_Paws")
         self.Language = spacy.load("en_core_web_lg")
         self.Checklist = RequestChecklist()
-        self.MovieService = MovieService()
+        #self.MovieService = MovieService()
         self.UserPreferences = UserPreferences()
 
     def get_liked_movies(self, user_response):
@@ -226,7 +226,7 @@ class Chatter:
 
     def generate_prompt(self, part_of_conversation: str):
         original_prompt = self.Prompts[part_of_conversation]
-        paraphrased = self.Paraphraser(original_prompt, max_length = 100)
+        paraphrased = self.Paraphraser(original_prompt, max_length = 100)[0]
         new_prompt = paraphrased['generated_text']
         print(f'\n{new_prompt}\n')
     
@@ -237,7 +237,7 @@ class Chatter:
         
         because = True
         for line in recommended_because:
-            paraphrased = self.Paraphraser(line, max_length = 100)
+            paraphrased = self.Paraphraser(line, max_length = 100)[0]
             new_line = paraphrased['generated_text']
             if because:
                 print(new_line)
@@ -257,7 +257,7 @@ class Chatter:
         waiting = self.Checklist.next_request()
         self.generate_prompt(waiting)
 
-        recommendations = self.MovieService.recommend_from_user_preferences(self.UserPreferences, top_n=3, similarity_threshold=0.5)
+        recommendations = None#self.MovieService.recommend_from_user_preferences(self.UserPreferences, top_n=3, similarity_threshold=0.5)
 
         self.generate_prompt('Recommend')
         
@@ -265,3 +265,5 @@ class Chatter:
             self.recommend_movie(recommendation)
 
         self.generate_prompt('Outro')
+
+        input("Press enter to quit...")
