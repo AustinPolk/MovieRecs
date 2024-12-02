@@ -77,7 +77,7 @@ class RequestChecklist:
 class Chatter:
     def __init__(self):
         self.Prompts = {
-            'Intro': 'Hello! I hope you\'re doing well, would you like me to help you find a movie to watch?',
+            'Intro': 'Hello! I hope you\'re doing well, let\'s find you some movies to watch.',
             'Enter': 'Alright, let\'s get started then!',
             'LikedMovies': 'Are there any movies that you really loved?',
             'DescribedMovies': 'Tell me about the type of movies you want to see. What would they be about?',
@@ -98,7 +98,7 @@ class Chatter:
         self.Paraphraser = pipeline("text2text-generation", model="Vamsi/T5_Paraphrase_Paws")
         self.Language = spacy.load("en_core_web_lg")
         self.Checklist = RequestChecklist()
-        #self.MovieService = MovieService()
+        self.MovieService = MovieService()
         self.UserPreferences = UserPreferences()
 
     def get_liked_movies(self, user_response):
@@ -185,6 +185,8 @@ class Chatter:
         elif self.detect_ready_for_recommendation(response):
             return True
         
+        self.generate_prompt('SaidYes')
+
         tokenized_response = self.Language(response)
 
         if next_request == 'LikedMovies':
@@ -257,7 +259,7 @@ class Chatter:
         waiting = self.Checklist.next_request()
         self.generate_prompt(waiting)
 
-        recommendations = None#self.MovieService.recommend_from_user_preferences(self.UserPreferences, top_n=3, similarity_threshold=0.5)
+        recommendations = self.MovieService.recommend_from_user_preferences(self.UserPreferences, top_n=3, similarity_threshold=0.5)
 
         self.generate_prompt('Recommend')
         
