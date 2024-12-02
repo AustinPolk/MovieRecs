@@ -8,6 +8,8 @@ from encode import SparseVectorEncoding, MovieEncoding
 import numpy as np
 from fuzzywuzzy import fuzz
 from inform import MovieInfo
+import random
+from autoencode import Autoencoder
 
 # it is the chatbot's job to divine this information
 class UserPreferences:
@@ -34,8 +36,8 @@ class MovieRecommendation:
         self.ExpressedLikeDirectors: list[str] = []       # list of director(s) for this movie that the user likes
         self.ExpressedLikeActors: list[str] = []          # list of actors in this movie that the user likes
         self.ExpressedLikeGenres: list[str] = []          # list of genres for this movie that the user likes
-        self.WithinDesiredTimePeriod: bool = True         # does the movie fall within the desired time period
-        self.HasDesiredOrigin: bool = True                # does the movie have the right origin
+        self.WithinDesiredTimePeriod: bool = False        # does the movie fall within the desired time period
+        self.HasDesiredOrigin: bool = False               # does the movie have the right origin
     # return a recommendation score based on the volume of criteria matching the user preferences
     def score(self):
         score = 0
@@ -58,6 +60,48 @@ class MovieRecommendation:
         if self.HasDesiredOrigin:
             score += 1
         return score
+    def explain(self):
+        exp_strs = [f'{self.RecommendedMovie.describe(True)} was recommended because']
+        if self.SimilarThemesToDescribed:
+            for described in self.SimilarThemesToDescribed:
+                exp_str = f'It has similar themes to your description of {described}'
+                exp_strs.append(exp_str)
+        if self.SimilarThemesToMovies:
+            for title in self.SimilarThemesToMovies:
+                exp_str = f'It has similar themes to the movie {title}'
+                exp_strs.append(exp_str)
+        if self.SimilarGenresToMovies:
+            for title in self.SimilarGenresToMovies:
+                exp_str = f'It is in the same genre as the movie {title}'
+                exp_strs.append(exp_str)
+        if self.SimilarActorsToMovies:
+            for title in self.SimilarActorsToMovies:
+                exp_str = f'It has some of the same cast members as the movie {title}'
+                exp_strs.append(exp_str)
+        if self.ExpressedLikeDirectors:
+            for name in self.ExpressedLikeDirectors:
+                exp_str = f'It is directed by {name}'
+                exp_strs.append(exp_str)
+        if self.ExpressedLikeActors:
+            for name in self.ExpressedLikeActors:
+                exp_str = f'It stars {name}'
+                exp_strs.append(exp_str)
+        if self.ExpressedLikeGenres:
+            for genre in self.ExpressedLikeGenres:
+                exp_str = f'It is in the {genre} genre'
+                exp_strs.append(exp_str)
+        if self.WithinDesiredTimePeriod:
+            exp_str = 'It was released in the desired time frame'
+            exp_strs.append(exp_str)
+        if self.HasDesiredOrigin:
+            exp_str = 'It has the desired regional origin'
+            exp_strs.append(exp_str)
+
+        explanation = exp_strs[0]
+        for exp in exp_strs[1:]:
+            explanation += f'\n\t- {exp}'
+        explanation += '\n'
+        return explanation
 
 class MovieService:
     def __init__(self):
@@ -65,7 +109,9 @@ class MovieService:
         self.MovieEncodings: dict[int, MovieEncoding] = {}
         self.ClusterModel: KMeans = None
         self.Recommendations: dict[int, MovieRecommendation] = {}
+        self.Autoencoder: Autoencoder = None
         self.load_setup_data()
+        self.use_autoencoder(loss_threshold=0.0002)
 
     def load_setup_data(self):
         data_folder = "data"
@@ -86,7 +132,18 @@ class MovieService:
         with open(cluster_model_bin, 'rb') as cluster_model_file:
             self.ClusterModel = pickle.load(cluster_model_file)
 
-        self.Recommendations = {id: MovieRecommendation(self.MovieInfo[id]) for id in ids}
+    def use_autoencoder(self, denormalize: bool = False, loss_threshold: float = 0.01):
+        for i in range(2, 32):
+            print(f"Testing {i} dimensions")
+            autoencoder = Autoencoder(len(self.ClusterModel.cluster_centers_), 64, i, activation='relu')
+            loss = autoencoder.train_on_movie_encodings(self.MovieEncodings, denormalize)
+            print(f"Loss for {i} dimensions: {loss}")
+            if loss < loss_threshold:
+                print(f"Autoencoder using {i} dimensions")
+                self.Autoencoder = autoencoder
+                return
+        else:
+            raise Exception("loss threshold too low")
 
     def encode_plot_theme_query(self, plot_query: str):
         language = spacy.load("en_core_web_lg")
@@ -111,9 +168,12 @@ class MovieService:
         ids = list(self.MovieInfo.keys())
         similarities = {}
         for id, movieInfo in self.MovieInfo.items():
-            title = movieInfo.Title
-            similarities[id] = fuzz.partial_ratio(title, title)
-        return sorted(ids, key = lambda x: similarities[x], reverse=True)[:top_n]
+            if not movieInfo.Title:
+                similarities[id] = 0
+            else:
+                similarities[id] = fuzz.partial_ratio(title.lower(), movieInfo.Title.lower())
+        sorted_ids = sorted(ids, key = lambda x: similarities[x], reverse=True)[:top_n]
+        return [self.MovieInfo[x] for x in sorted_ids]
 
     def query_movies_by_director(self, director: str, from_ids: list[str]):
         director_names = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'director'] for id in from_ids}
@@ -121,7 +181,8 @@ class MovieService:
         for id in director_names:
             for director_name in director_names[id]:
                 # use partial ratio for directors in case only the last name is specified (e.g. Tarantino)
-                if fuzz.partial_ratio(director_name, director) > 90:
+                ratio = fuzz.partial_ratio(director_name, director)
+                if ratio > 90:
                     ids.append(id)
                     break
         return ids
@@ -131,7 +192,8 @@ class MovieService:
         ids = []
         for id in actor_names:
             for actor_name in actor_names[id]:
-                if fuzz.ratio(actor_name, actor) > 90:
+                ratio = fuzz.ratio(actor_name, actor)
+                if ratio > 90:
                     ids.append(id)
                     break
         return ids
@@ -141,7 +203,8 @@ class MovieService:
         ids = []
         for id in genres:
             for genre_name in genres[id]:
-                if fuzz.ratio(genre_name, genre) > 95:
+                ratio = fuzz.ratio(genre_name, genre)
+                if ratio > 95:
                     ids.append(id)
                     break
         return ids
@@ -151,12 +214,18 @@ class MovieService:
             similar_encoding = self.MovieEncodings[similar_to].PlotEncoding
         else: # it's a plot string to encode
             similar_encoding = self.encode_plot_theme_query(similar_to)
+        if self.Autoencoder:
+            auto_encoded = self.Autoencoder(encoding)
 
-        plot_encodings = {id: self.MovieEncodings[id].PlotEncoding for id in from_ids}
+        plot_encodings = {id: self.MovieEncodings[id].PlotEncoding for id in from_ids}            
 
         similar_ids = []
         for id, encoding in plot_encodings.items():
-            if cosine:
+            if self.Autoencoder:
+                auto_similar = self.Autoencoder(similar_encoding)
+                distance = np.linalg.norm(auto_encoded - auto_similar)
+                similarity = 1 / (distance + 1)
+            elif cosine:
                 similarity = encoding.normed_cosine_similarity(similar_encoding)
             else: # number of similar themes, regardless of intensity, over number of themes in the similar encoding
                 these_themes = set(similar_encoding.Dimensions.keys())
@@ -175,13 +244,15 @@ class MovieService:
         else:
             cast_members = [member.strip() for member in similar_to.split(',')]
         ideal_matches = len(cast_members)
+        if not ideal_matches:
+            return from_ids
 
         ids = []
         for id, cast in all_cast_members.items():
             matches = 0
             for desired_member in cast_members:
                 for member in cast:
-                    if fuzz.ratio(desired_member, member) > 90:
+                    if fuzz.ratio(desired_member.lower(), member.lower()) > 90:
                         matches += 1
             similarity = matches / ideal_matches
             if similarity > similarity_threshold:
@@ -196,13 +267,15 @@ class MovieService:
         else:
             movie_genres = [member.strip() for member in similar_to.split(',')]
         ideal_matches = len(movie_genres)
+        if not ideal_matches:
+            return from_ids
 
         ids = []
         for id, genres in all_genres.items():
             matches = 0
             for desired_genre in movie_genres:
                 for genre in genres:
-                    if fuzz.ratio(desired_genre, genre) > 90:
+                    if fuzz.ratio(desired_genre.lower(), genre.lower()) > 90:
                         matches += 1
             similarity = matches / ideal_matches
             if similarity > similarity_threshold:
@@ -234,7 +307,7 @@ class MovieService:
             all_similar = set()
             for described in user_preferences.DescribedPlots:
                 similar_to_described = self.query_movies_with_similar_plot_themes(described, list(remaining_ids), similarity_threshold)
-                all_similar |= similar_to_described
+                all_similar |= set(similar_to_described)
 
             if union_query:
                 union |= all_similar
@@ -248,7 +321,7 @@ class MovieService:
                 with_similar_cast = self.query_movies_with_similar_cast(movie_id, list(remaining_ids), similarity_threshold)
                 with_similar_genre = self.query_movies_with_similar_genre(movie_id, list(remaining_ids), similarity_threshold)
                 similar_movies = list(set(with_similar_themes) | set(with_similar_cast) | set(with_similar_genre))
-                all_similar |= similar_movies
+                all_similar |= set(similar_movies)
 
             if union_query:
                 union |= all_similar
@@ -258,8 +331,8 @@ class MovieService:
         if user_preferences.Directors:
             all_by_director = set()
             for director in user_preferences.Directors:
-                by_director = self.query_movies_by_director(director, list(remaining_ids))
-                all_by_director |= by_director
+                by_director = self.query_movies_by_director(director.lower(), list(remaining_ids))
+                all_by_director |= set(by_director)
 
             if union_query:
                 union |= all_by_director
@@ -269,8 +342,8 @@ class MovieService:
         if user_preferences.Actors:
             all_with_actor = set()
             for actor in user_preferences.Actors:
-                with_actor = self.query_movies_by_actor(actor, list(remaining_ids))
-                all_with_actor |= with_actor
+                with_actor = self.query_movies_by_actor(actor.lower(), list(remaining_ids))
+                all_with_actor |= set(with_actor)
             
             if union_query:
                 union |= all_with_actor
@@ -280,8 +353,8 @@ class MovieService:
         if user_preferences.Genres:
             all_in_genre = set()
             for genre in user_preferences.Genres:
-                in_genre = self.query_movies_by_genre(genre, list(remaining_ids))
-                all_in_genre |= in_genre
+                in_genre = self.query_movies_by_genre(genre.lower(), list(remaining_ids))
+                all_in_genre |= set(in_genre)
 
             if union_query:
                 union |= all_in_genre
@@ -290,74 +363,86 @@ class MovieService:
                   
         if user_preferences.MoviesAfter:
             movies_after = self.query_movies_after_or_on(user_preferences.MoviesAfter, list(remaining_ids))
+            movies_after = set(movies_after)
 
+            # this must be applied as an intersection
             if union_query:
-                union |= movies_after
+                union &= movies_after
             else:
                 remaining_ids &= movies_after
 
         if user_preferences.MoviesBefore:
             movies_before = self.query_movies_before(user_preferences.MoviesBefore, list(remaining_ids))
+            movies_before = set(movies_before)
 
+            # this must be applied as an intersection
             if union_query:
-                union |= movies_before
+                union &= movies_before
             else:
                 remaining_ids &= movies_before
 
+        # assemble the list of movies from the allowed origins
+        from_allowed_origins = set()
+
         if user_preferences.AllowAmericanOrigin:
             american = self.query_american_movies(list(remaining_ids))
-
-            if union_query:
-                union |= american
-            else:
-                remaining_ids &= american
+            american = set(american)
+            from_allowed_origins |= american
 
         if user_preferences.AllowBollywoordOrigin:
             bollywood = self.query_bollywood_movies(list(remaining_ids))
-
-            if union_query:
-                union |= bollywood
-            else:
-                remaining_ids &= bollywood
+            bollywood = set(bollywood)
+            from_allowed_origins |= bollywood
 
         if user_preferences.AllowOtherOrigin:
             other_origin = self.query_other_foreign_movies(list(remaining_ids))
+            other_origin = set(other_origin)
+            from_allowed_origins |= other_origin
 
+        # only filter if it wouldn't automatically delete the whole query
+        if from_allowed_origins:
+            # must be applied as an intersection
             if union_query:
-                union |= other_origin
+                union &= from_allowed_origins
             else:
-                remaining_ids &= other_origin
+                remaining_ids &= from_allowed_origins
 
         if union_query:
-            movie_ids = list(union)
+            movie_ids = list(union - set(user_preferences.KnownLikedMovies))
         else:
-            movie_ids = list(remaining_ids)
+            movie_ids = list(remaining_ids - set(user_preferences.KnownLikedMovies))
         
         queried_movies = [self.MovieInfo[x] for x in movie_ids]
 
-        return queried_movies
+        return queried_movies[:top_n]
 
     def recommend_movies_by_director(self, director: str):
         director_names = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'director'] for id in self.Recommendations}
         for id in director_names:
             for director_name in director_names[id]:
                 # use partial ratio for directors in case only the last name is specified (e.g. Tarantino)
-                if fuzz.partial_ratio(director_name, director) > 90:
-                    self.Recommendations[id].ExpressedLikeDirectors.append(director_name)
+                ratio = fuzz.partial_ratio(director_name.lower(), director)
+                if ratio > 90:
+                    self.Recommendations[id].ExpressedLikeDirectors.append(director)
+                    break
 
     def recommend_movies_by_actor(self, actor: str):
         actor_names = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'cast'] for id in self.Recommendations}
         for id in actor_names:
             for actor_name in actor_names[id]:
-                if fuzz.ratio(actor_name, actor) > 90:
-                    self.Recommendations[id].ExpressedLikeActors.append(actor_name)
+                ratio = fuzz.ratio(actor_name.lower(), actor)
+                if ratio > 90:
+                    self.Recommendations[id].ExpressedLikeActors.append(actor)
+                    break
 
     def recommend_movies_by_genre(self, genre: str):
         genres = {id: [ent.EntityName for ent in self.MovieEncodings[id].EntityEncodings if ent.EntityLabel.lower() == 'genre'] for id in self.Recommendations}
         for id in genres:
             for genre_name in genres[id]:
-                if fuzz.ratio(genre_name, genre) > 95:
-                    self.Recommendations[id].ExpressedLikeGenres.append(genre_name)
+                ratio = fuzz.ratio(genre_name.lower(), genre)
+                if ratio > 95:
+                    self.Recommendations[id].ExpressedLikeGenres.append(genre)
+                    break
 
     def recommend_movies_with_similar_plot_themes(self, similar_to: str|int, similarity_threshold: float, cosine: bool = True):
         described = False
@@ -381,7 +466,7 @@ class MovieService:
                 if described:
                     self.Recommendations[id].SimilarThemesToDescribed.append(similar_to)
                 else:
-                    title = self.MovieInfo[id].Title
+                    title = self.MovieInfo[similar_to].describe(True)
                     self.Recommendations[id].SimilarThemesToMovies.append(title)
 
     def recommend_movies_with_similar_cast(self, similar_to: str|int, similarity_threshold: float):
@@ -392,6 +477,8 @@ class MovieService:
         #else:
         #    cast_members = [member.strip() for member in similar_to.split(',')]
         ideal_matches = len(cast_members)
+        if not ideal_matches:
+            return
 
         for id, cast in all_cast_members.items():
             matches = 0
@@ -401,7 +488,7 @@ class MovieService:
                         matches += 1
             similarity = matches / ideal_matches
             if similarity > similarity_threshold:
-                title = self.MovieInfo[id].Title
+                title = self.MovieInfo[similar_to].describe(True)
                 self.Recommendations[id].SimilarActorsToMovies.append(title)
 
     def recommend_movies_with_similar_genre(self, similar_to: str|int, similarity_threshold: float):
@@ -412,6 +499,8 @@ class MovieService:
         #else:
         #    movie_genres = [member.strip() for member in similar_to.split(',')]
         ideal_matches = len(movie_genres)
+        if not ideal_matches:
+            return
 
         for id, genres in all_genres.items():
             matches = 0
@@ -421,18 +510,18 @@ class MovieService:
                         matches += 1
             similarity = matches / ideal_matches
             if similarity > similarity_threshold:
-                title = self.MovieInfo[id].Title
+                title = self.MovieInfo[similar_to].describe(True)
                 self.Recommendations[id].SimilarGenresToMovies.append(title)
 
     def recommend_movies_before(self, year: int):
         for _, recommendation in self.Recommendations.items():
-            if recommendation.RecommendedMovie.Year >= year:
-                recommendation.WithinDesiredTimePeriod = False
+            if recommendation.RecommendedMovie.Year < year:
+                recommendation.WithinDesiredTimePeriod = True
 
     def recommend_movies_after_or_on(self, year: int):
         for _, recommendation in self.Recommendations.items():
-            if recommendation.RecommendedMovie.Year < year:
-                recommendation.WithinDesiredTimePeriod = False
+            if recommendation.RecommendedMovie.Year >= year:
+                recommendation.WithinDesiredTimePeriod = True
     
     def recommend_american_movies(self):
         for _, recommendation in self.Recommendations.items():
@@ -451,24 +540,26 @@ class MovieService:
 
     # does not filter, but will rank
     def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10, similarity_threshold: float = 0.6):
-        
+        ids = list(self.MovieEncodings.keys())
+        self.Recommendations = {id: MovieRecommendation(self.MovieInfo[id]) for id in ids}
+
         if user_preferences.DescribedPlots:
             for described in user_preferences.DescribedPlots:
                 self.recommend_movies_with_similar_plot_themes(described, similarity_threshold)
         if user_preferences.KnownLikedMovies:
             for movie_id in user_preferences.KnownLikedMovies:
                 self.recommend_movies_with_similar_plot_themes(movie_id, similarity_threshold)
-                self.recommend_movies_with_similar_cast(movie_id, similarity_threshold)
-                self.recommend_movies_with_similar_genre(movie_id, similarity_threshold)
+                #self.recommend_movies_with_similar_cast(movie_id, similarity_threshold)
+                #self.recommend_movies_with_similar_genre(movie_id, similarity_threshold)
         if user_preferences.Directors:
             for director in user_preferences.Directors:
-                self.recommend_movies_by_director(director)
+                self.recommend_movies_by_director(director.lower())
         if user_preferences.Actors:
             for actor in user_preferences.Actors:
-                self.recommend_movies_by_actor(actor)
+                self.recommend_movies_by_actor(actor.lower())
         if user_preferences.Genres:
             for genre in user_preferences.Genres:
-                self.recommend_movies_by_genre(genre)
+                self.recommend_movies_by_genre(genre.lower())
         if user_preferences.MoviesAfter:
             self.recommend_movies_after_or_on(user_preferences.MoviesAfter)
         if user_preferences.MoviesBefore:
@@ -480,8 +571,12 @@ class MovieService:
         if user_preferences.AllowOtherOrigin:
             self.recommend_other_foreign_movies()
 
-        movie_ids = list(self.Recommendations.keys())
-        recommended_ids = sorted(movie_ids, lambda x: self.Recommendations[x].score(), reverse=True)[:top_n]
+        if user_preferences.KnownLikedMovies:
+            movie_ids = list(set(self.Recommendations.keys()) - set(user_preferences.KnownLikedMovies))
+        else:
+            movie_ids = list(self.Recommendations.keys())
+        random.shuffle(movie_ids)
+        recommended_ids = sorted(movie_ids, key = lambda x: self.Recommendations[x].score(), reverse=True)[:top_n]
         recommendations = [self.Recommendations[x] for x in recommended_ids]
 
         return recommendations
