@@ -1,19 +1,19 @@
-# MovieReviews
+# MovieRecs
 
-Given a list of movies the user likes, a model will be trained to identify whether the user will like a given movie based on the available plot information. This can save the user time researching a movie to determine whether they will like it, and also avoids the issue of spoilers by keeping the actual plot information hidden from the user.
+MovieRecs is a personalized movie recommendation agent that can gather conversational information from the user to suggest movies that they might enjoy. It has access to information for around 35,000 movies, spanning many genres, years, and countries of origin, making for a diverse range of movies to recommend from. Built entirely in Python, the source code and any required packages can be downloaded and run on any machine.
+
+### Video Demo
+
+A video demonstrating an example MovieRecs session can be found [here](https://youtu.be/IZpuDGD65HM)
 
 ## Data Sources
 
-This project aims to take qualitative information about the plot of a movie and generate quantitative data that can be used to identify that story. The main transformation from words to data comes in the form of word vector embeddings, such as those supplied by a pre-trained model from Google (https://code.google.com/archive/p/word2vec/). Alternatively, text may be compiled from many movie plots and a new model trained on them for this specific purpose. This text can be drawn from plot summaries on Wikipedia, The Movie Spoiler, etc. These sources will also be used when evaluating individual movie plots, both to train a user preference model and to test a given movie against that model.
+The raw movie information was sourced from a dataset on Kaggle, [Wikipedia Movie Plots](https://www.kaggle.com/datasets/jrobischon/wikipedia-movie-plots). The specific information for each movie, including items like the genre and plot, was then parsed and structured into a more usable format. Multiple stages of data processing were used, the results of which are cached and used in MovieRecs.
 
 ## Methodology
 
-Via vector embeddings of text from a plot summary, a single high-dimensional vector will be produced which embeds key information about that plot. A vector embedding model will derive this final vector through analysis of individual components of the plot, and vector embeddings of the text therein. 
+MovieRecs uses a recommendation system that recommends the movies with the largest amount of favorable traits. Traits include the genre, plot themes, cast, and other identifying information about the movie. The traits for each movie are evaluated against user preferences and a recommendation score is generated based on the number of preferred traits. The top 3 movies with the highest scores are then returned as recommendations to the user.
 
-### Benchmarking
+### Evaluating Similar Movies
 
-To benchmark the efficacy of the plot vector embedding, an analysis of the clustering of the results can be performed. It would be expected that similar movies, such as those within a series or saga, would have similar vector embeddings clustered near each other. In the same way, it would be expected that very different movies would not cluster near each other. At the same time, it may be expected that movies of a similar genre would cluster closer together than those of different genres. Analyzing movies with very clearly defined similarities and differences will show how the results of a given embedding model may differ from expectation.
-
-## User Preference Model
-
-As mentioned above, the user will supply a list of movies they like. Each of these will be evaluated using their plot information, resulting in vectors in a higher dimensional space that represent those movies. These vectors can now be used as training data for a model, such as an RBF machine or a neural network. Then, given a new movie plot vector, this newly trained model can assess whether or not the user will like a movie.
+MovieRecs also implements a system for comparing themes found in the plots of movies. This involves generating a vector embedding for each movie plot and calculating the Euclidean distance between them to measure similarity. To generate these embeddings, the plots are tokenized, and each word is assigned to a precomputed theme "cluster." These clustering results are stored in a vector, which is then encoded to reduce it from several thousand to around a dozen dimensions. This is the vector that is used when comparing the themes identified in the plot of a given movie.
