@@ -1,0 +1,95 @@
+Hello! I hope you are doing well, let's find some movies to watch.
+
+
+Are there any genres in particular that you are looking for?
+
+>>> I'd like to see drama, comedy, and action
+
+Perfect, I'll make a note of that.
+
+
+Do you have directors whose work you really enjoyed?
+
+>>> No, not really
+
+Alright, no worries, no worries.
+
+
+Is there a particular time period you want to watch movies from?
+
+>>> I'd like to see movies from before 2005
+
+Perfect, I'll make a note of that.
+
+
+Are there any movies that you really loved?
+
+>>> Yes, I really enjoyed "The Fast and the Furious"
+
+Perfect, I'll make a note of that.
+
+
+Are there any actors or actresses that you want to watch?
+
+>>> I'd like to see Paul Walker or maybe Chris Hemsworth
+
+Perfect, I'll make a note of that.
+
+
+Tell me about the type of movies you want to see and what would they be about?
+
+>>> Superheroes battling against alien invaders who want to destroy the planet
+
+Perfect, I'll make a note of that.
+
+
+Are you interested in watching American films?
+
+>>> Yes
+
+Perfect, I'll make a note of that.
+
+
+Have you ever had an interest in foreign films?
+
+>>> Of course
+
+Perfect, I'll make a note of that.
+
+
+Would you like to watch any Bollywood movies?
+
+>>> I would love to
+
+Perfect, I'll make a note of that.
+
+
+Please wait a moment while I consider the information you've provided me...
+
+
+Here are some movies that I thought you might enjoy .
+
+- 2 Fast 2 Furious (2003)
+"2 Fast 2 Furious (2003)" was recommended for the following reasons:
+        - It stars paul walker .
+        - It is in the action genre genre.
+        - It was released in the desired time frame.
+        - It has the desired regional origin.
+
+- She's All That (1999)
+For the following reasons, "She's All That (1999)" was recommended:
+        - It stars paul walker .
+        - It is in the comedy genre.
+        - It was released in the desired time frame.
+        - It has the desired regional origin.
+
+- Varsity Blues (1999)
+"Varsity Blues (1999)" was recommended for the following reasons:
+        - It stars paul walker .
+        - It is in the drama genre.
+        - It is in the comedy genre.
+        - It was released in the desired time frame.
+        - It has the desired regional origin.
+
+
+I hope that my recommendations will be of service to you - come back soon!
