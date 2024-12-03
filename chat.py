@@ -290,6 +290,7 @@ class Chatter:
         
         for recommendation in recommendations:
             self.recommend_movie(recommendation, debug)
+            print()
 
         self.generate_prompt('Outro', debug)
 
