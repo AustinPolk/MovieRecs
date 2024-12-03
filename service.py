@@ -60,6 +60,7 @@ class MovieRecommendation:
         if self.HasDesiredOrigin:
             score += 1
         return score
+    
     def explain(self, bullet_list: bool, return_list: bool = False):
         exp_strs = [f'\"{self.RecommendedMovie.describe(True)}\" was recommended for the following reasons: ']
         if self.SimilarThemesToDescribed:
@@ -552,9 +553,10 @@ class MovieService:
                 recommendation.HasDesiredOrigin = True
 
     # does not filter, but will rank
-    def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10, similarity_threshold: float = 0.6):
+    def recommend_from_user_preferences(self, user_preferences: UserPreferences, top_n: int = 10, mixed_results: bool = False, similarity_threshold: float = 0.6):
         # check if there are titles the user likes which haven't been correlated to a movie Id
         if user_preferences.KnownLikedTitles and not user_preferences.KnownLikedMovies:
+            user_preferences.KnownLikedMovies = []
             for title in user_preferences.KnownLikedTitles:
                 likely_movie = self.query_movies_by_title(title, top_n=1)[0]
                 likely_id = likely_movie.Id
@@ -596,7 +598,15 @@ class MovieService:
         else:
             movie_ids = list(self.Recommendations.keys())
         random.shuffle(movie_ids)
-        recommended_ids = sorted(movie_ids, key = lambda x: self.Recommendations[x].score(), reverse=True)[:top_n]
-        recommendations = [self.Recommendations[x] for x in recommended_ids]
 
+        # oversample the recommended ids in case the results should be mixed
+        recommended_ids = sorted(movie_ids, key = lambda x: self.Recommendations[x].score(), reverse=True)[:2 * top_n]
+
+        # if mixed_results, shuffle the oversampled recommendations
+        if mixed_results:
+            random.shuffle(recommended_ids)
+        # get the correct number of recommendations
+        recommended_ids = recommended_ids[:top_n]
+
+        recommendations = [self.Recommendations[x] for x in recommended_ids]
         return recommendations
