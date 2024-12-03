@@ -1,4 +1,4 @@
-# _MovieRecs_
+# MovieRecs
 
 _MovieRecs_ is a personalized movie recommendation agent that can gather conversational information from the user to suggest movies that they might enjoy. It has access to information for around 35,000 movies, spanning many genres, years, and countries of origin, making for a diverse range of movies to recommend from. Built entirely in Python, the source code and any required packages can be downloaded and run on any machine.
 
@@ -22,4 +22,4 @@ _MovieRecs_ uses a recommendation system that recommends the movies with the lar
 
 ### Evaluating Similar Movies
 
-MovieRecs also implements a system for comparing themes found in the plots of movies to enhance recommendations based on known movies. This involves generating a vector embedding for each movie plot and calculating the Euclidean distance between them to measure similarity. To generate these embeddings, the plots are tokenized, and each word is assigned to a precomputed theme "cluster." These clustering results are stored in a vector, which is then encoded to reduce it from several thousand to around a dozen dimensions. This is the vector that is used when comparing the themes identified in the plot of a given movie.
+_MovieRecs_ also implements a system for comparing themes found in the plots of movies to enhance recommendations based on known movies. This involves generating a vector embedding for each movie plot and calculating the Euclidean distance between them to measure similarity. To generate these embeddings, the plots are tokenized, and each word is assigned to a precomputed theme "cluster." These clustering results are stored in a vector, which is then encoded to reduce it from several thousand to around a dozen dimensions. This is the vector that is used when comparing the themes identified in the plot of a given movie.
